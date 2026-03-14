@@ -1,0 +1,3 @@
+#!/bin/bash
+SCRIPT_DIR="/Users"
+open -a Terminal "/Users/credens/web/polymarket/launcher.sh"

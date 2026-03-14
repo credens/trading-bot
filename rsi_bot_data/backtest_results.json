@@ -1,0 +1,231 @@
+{
+  "total_return_pct": 15.56,
+  "buy_hold_pct": 23.9,
+  "win_rate": 54.1,
+  "profit_factor": 1.25,
+  "max_drawdown": -15.01,
+  "total_trades": 109,
+  "final_capital": 115559.98,
+  "trades": [
+    {
+      "date": "2026-02-12",
+      "symbol": "AMAT",
+      "rsi_entry": 44.25,
+      "entry_price": 327.98,
+      "exit_price": 337.82,
+      "exit_reason": "TAKE_PROFIT",
+      "pnl": 3098.53,
+      "pnl_pct": 3.0,
+      "capital": 111818.91
+    },
+    {
+      "date": "2026-02-13",
+      "symbol": "AMAT",
+      "rsi_entry": 63.56,
+      "entry_price": 354.47,
+      "exit_price": 358.68,
+      "exit_reason": "CLOSE",
+      "pnl": 1263.09,
+      "pnl_pct": 1.19,
+      "capital": 113082.0
+    },
+    {
+      "date": "2026-02-17",
+      "symbol": "MOS",
+      "rsi_entry": 61.24,
+      "entry_price": 28.84,
+      "exit_price": 29.19,
+      "exit_reason": "CLOSE",
+      "pnl": 1329.92,
+      "pnl_pct": 1.24,
+      "capital": 114411.92
+    },
+    {
+      "date": "2026-02-18",
+      "symbol": "COST",
+      "rsi_entry": 57.39,
+      "entry_price": 996.08,
+      "exit_price": 987.82,
+      "exit_reason": "CLOSE",
+      "pnl": -901.32,
+      "pnl_pct": -0.83,
+      "capital": 113510.6
+    },
+    {
+      "date": "2026-02-19",
+      "symbol": "COST",
+      "rsi_entry": 53.62,
+      "entry_price": 987.82,
+      "exit_price": 985.27,
+      "exit_reason": "CLOSE",
+      "pnl": -278.37,
+      "pnl_pct": -0.26,
+      "capital": 113232.23
+    },
+    {
+      "date": "2026-02-20",
+      "symbol": "COST",
+      "rsi_entry": 48.36,
+      "entry_price": 985.27,
+      "exit_price": 986.02,
+      "exit_reason": "CLOSE",
+      "pnl": 81.88,
+      "pnl_pct": 0.08,
+      "capital": 113314.11
+    },
+    {
+      "date": "2026-02-23",
+      "symbol": "VLO",
+      "rsi_entry": 40.53,
+      "entry_price": 197.39,
+      "exit_price": 199.33,
+      "exit_reason": "CLOSE",
+      "pnl": 1058.0,
+      "pnl_pct": 0.98,
+      "capital": 114372.11
+    },
+    {
+      "date": "2026-02-24",
+      "symbol": "MOS",
+      "rsi_entry": 41.63,
+      "entry_price": 28.25,
+      "exit_price": 27.4,
+      "exit_reason": "STOP_LOSS",
+      "pnl": -3259.61,
+      "pnl_pct": -3.0,
+      "capital": 111112.5
+    },
+    {
+      "date": "2026-02-25",
+      "symbol": "MOS",
+      "rsi_entry": 28.61,
+      "entry_price": 26.75,
+      "exit_price": 26.93,
+      "exit_reason": "CLOSE",
+      "pnl": 704.24,
+      "pnl_pct": 0.67,
+      "capital": 111816.74
+    },
+    {
+      "date": "2026-02-26",
+      "symbol": "GILD",
+      "rsi_entry": 19.17,
+      "entry_price": 143.77,
+      "exit_price": 148.08,
+      "exit_reason": "TAKE_PROFIT",
+      "pnl": 3186.78,
+      "pnl_pct": 3.0,
+      "capital": 115003.52
+    },
+    {
+      "date": "2026-02-27",
+      "symbol": "MOS",
+      "rsi_entry": 33.39,
+      "entry_price": 27.61,
+      "exit_price": 27.28,
+      "exit_reason": "CLOSE",
+      "pnl": -1295.03,
+      "pnl_pct": -1.19,
+      "capital": 113708.49
+    },
+    {
+      "date": "2026-03-02",
+      "symbol": "MOS",
+      "rsi_entry": 32.23,
+      "entry_price": 27.28,
+      "exit_price": 26.56,
+      "exit_reason": "CLOSE",
+      "pnl": -2866.48,
+      "pnl_pct": -2.65,
+      "capital": 110842.01
+    },
+    {
+      "date": "2026-03-03",
+      "symbol": "MOS",
+      "rsi_entry": 31.39,
+      "entry_price": 26.56,
+      "exit_price": 25.79,
+      "exit_reason": "CLOSE",
+      "pnl": -3027.67,
+      "pnl_pct": -2.88,
+      "capital": 107814.34
+    },
+    {
+      "date": "2026-03-04",
+      "symbol": "MOS",
+      "rsi_entry": 23.98,
+      "entry_price": 25.79,
+      "exit_price": 26.06,
+      "exit_reason": "CLOSE",
+      "pnl": 1063.22,
+      "pnl_pct": 1.04,
+      "capital": 108877.56
+    },
+    {
+      "date": "2026-03-05",
+      "symbol": "MOS",
+      "rsi_entry": 18.4,
+      "entry_price": 26.06,
+      "exit_price": 26.09,
+      "exit_reason": "CLOSE",
+      "pnl": 118.07,
+      "pnl_pct": 0.11,
+      "capital": 108995.64
+    },
+    {
+      "date": "2026-03-06",
+      "symbol": "MOS",
+      "rsi_entry": 21.32,
+      "entry_price": 26.09,
+      "exit_price": 26.87,
+      "exit_reason": "TAKE_PROFIT",
+      "pnl": 3106.38,
+      "pnl_pct": 3.0,
+      "capital": 112102.01
+    },
+    {
+      "date": "2026-03-09",
+      "symbol": "AMAT",
+      "rsi_entry": 35.42,
+      "entry_price": 338.94,
+      "exit_price": 345.88,
+      "exit_reason": "CLOSE",
+      "pnl": 2180.59,
+      "pnl_pct": 2.05,
+      "capital": 114282.6
+    },
+    {
+      "date": "2026-03-10",
+      "symbol": "MOS",
+      "rsi_entry": 34.55,
+      "entry_price": 26.48,
+      "exit_price": 27.27,
+      "exit_reason": "TAKE_PROFIT",
+      "pnl": 3257.05,
+      "pnl_pct": 3.0,
+      "capital": 117539.66
+    },
+    {
+      "date": "2026-03-11",
+      "symbol": "AMAT",
+      "rsi_entry": 29.95,
+      "entry_price": 351.07,
+      "exit_price": 340.54,
+      "exit_reason": "STOP_LOSS",
+      "pnl": -3349.88,
+      "pnl_pct": -3.0,
+      "capital": 114189.78
+    },
+    {
+      "date": "2026-03-12",
+      "symbol": "AMAT",
+      "rsi_entry": 31.51,
+      "entry_price": 337.27,
+      "exit_price": 341.53,
+      "exit_reason": "CLOSE",
+      "pnl": 1370.2,
+      "pnl_pct": 1.26,
+      "capital": 115559.98
+    }
+  ]
+}

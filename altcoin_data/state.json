@@ -1,0 +1,100 @@
+{
+  "bot": "altcoins",
+  "initial_capital": 500.0,
+  "current_capital": 155.0,
+  "total_pnl": 0.0,
+  "total_pnl_pct": -69.0,
+  "win_rate": 0,
+  "open_positions": [
+    {
+      "symbol": "PIXELUSDT",
+      "direction": "LONG",
+      "strategy": "MOMENTUM",
+      "entry_price": 0.012968,
+      "entry_time": "2026-03-13T23:16:32.981084",
+      "size_usdt": 75.0,
+      "stop_loss": 0.01257896,
+      "take_profit": 0.01374608,
+      "confidence": "MEDIUM",
+      "reasoning": "Tendencia EMA bullish con +18.5% en 24h y volumen masivo de $852M sugiere momentum alcista continuado. RSI neutral permite entrada sin sobrecompra.",
+      "leverage": 3
+    },
+    {
+      "symbol": "1000PEPEUSDT",
+      "direction": "SHORT",
+      "strategy": "MEAN_REVERSION",
+      "entry_price": 0.0034028,
+      "entry_time": "2026-03-13T23:16:32.981225",
+      "size_usdt": 75.0,
+      "stop_loss": 0.00348787,
+      "take_profit": 0.0032837,
+      "confidence": "MEDIUM",
+      "reasoning": "RSI en 67.7 cerca de sobrecompra y BB%B en 0.86 indica precio cerca del upper band, sugiriendo potencial correcci\u00f3n a la baja en un contexto bearish general.",
+      "leverage": 3
+    },
+    {
+      "symbol": "HYPEUSDT",
+      "direction": "SHORT",
+      "strategy": "MEAN_REVERSION",
+      "entry_price": 36.737,
+      "entry_time": "2026-03-13T23:16:32.981312",
+      "size_usdt": 75.0,
+      "stop_loss": 37.655425,
+      "take_profit": 35.083835,
+      "confidence": "MEDIUM",
+      "reasoning": "RSI en 69 cerca de sobrecompra, BB%B en 0.85 indica precio cerca del upper band, y funding rate negativo sugiere sesgo bajista en el mercado.",
+      "leverage": 3
+    },
+    {
+      "symbol": "XAGUSDT",
+      "direction": "LONG",
+      "strategy": "MEAN_REVERSION",
+      "entry_price": 80.62,
+      "entry_time": "2026-03-13T23:16:32.981403",
+      "size_usdt": 60.0,
+      "stop_loss": 78.6045,
+      "take_profit": 83.4417,
+      "confidence": "MEDIUM",
+      "reasoning": "RSI en 35.1 indica oversold con potencial rebote, BB%B en 0.22 cerca del lower band sugiere precio comprimido listo para reversi\u00f3n hacia la media.",
+      "leverage": 3
+    },
+    {
+      "symbol": "XRPUSDT",
+      "direction": "SHORT",
+      "strategy": "RANGE",
+      "entry_price": 1.4004,
+      "entry_time": "2026-03-13T23:16:32.981522",
+      "size_usdt": 60.0,
+      "stop_loss": 1.43541,
+      "take_profit": 1.351386,
+      "confidence": "MEDIUM",
+      "reasoning": "XRP est\u00e1 en BB%B 0.84 cerca del upper band con RSI 63.4, sugiriendo posible retroceso en mercado lateral con tendencia EMA bearish.",
+      "leverage": 3
+    }
+  ],
+  "closed_trades": [],
+  "total_trades": 0,
+  "cycle_log": [
+    {
+      "time": "23:16:32",
+      "msg": "\u2713 PAPER SHORT XRPUSDT @ $1.4004 | RANGE | SL $1.4354 | TP $1.3514 | $60"
+    },
+    {
+      "time": "23:16:32",
+      "msg": "\u2713 PAPER LONG XAGUSDT @ $80.6200 | MEAN_REVERSION | SL $78.6045 | TP $83.4417 | $60"
+    },
+    {
+      "time": "23:16:32",
+      "msg": "\u2713 PAPER SHORT HYPEUSDT @ $36.7370 | MEAN_REVERSION | SL $37.6554 | TP $35.0838 | $75"
+    },
+    {
+      "time": "23:16:32",
+      "msg": "\u2713 PAPER SHORT 1000PEPEUSDT @ $0.0034 | MEAN_REVERSION | SL $0.0035 | TP $0.0033 | $75"
+    },
+    {
+      "time": "23:16:32",
+      "msg": "\u2713 PAPER LONG PIXELUSDT @ $0.0130 | MOMENTUM | SL $0.0126 | TP $0.0137 | $75"
+    }
+  ],
+  "last_updated": "2026-03-13T23:16:32.981681"
+}
