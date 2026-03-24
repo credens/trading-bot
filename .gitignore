@@ -1,0 +1,32 @@
+# Secrets
+.env
+*.env
+.env.*
+
+# Logs y estado dinámico
+*.log
+*.pid
+.*.pid
+paper_trading/binance_state.json
+paper_trading/trading2_state.json
+altcoin_data/state.json
+altcoin_data/state_backup.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node / Vite
+node_modules/
+dist/
+polymarket-dashboard/dist/
+polymarket-dashboard/public/altcoin_data/
+polymarket-dashboard/public/paper_trading/
+
+# macOS
+.DS_Store
+
+# Claude
+.claude/
