@@ -38,6 +38,9 @@ if ! command -v python3 &> /dev/null; then
 fi
 
 echo "Verificando dependencias..."
+
+# Verificar Ollama si no hay API key de Anthropic
+# Ollama deshabilitado — usando análisis técnico puro sin LLM
 python3 -c "import anthropic, dotenv, requests, binance, pandas, numpy" 2>/dev/null
 if [ $? -ne 0 ]; then
     osascript -e 'display dialog "Instalando dependencias Python..." buttons {"OK"} default button "OK"'
@@ -69,12 +72,35 @@ BN_PID=$!
 echo $BN_PID > "$SCRIPT_DIR/.binance.pid"
 echo "✓ Binance bot iniciado (PID: $BN_PID)"
 
+# ─── Lanzar Trading2 Bot ─────────────────────────────────────────────────────
+echo "Iniciando Trading2 bot (MACD + RSI+VWAP + CVD)..."
+nohup python3 trading2.py >> "$LOG_FILE" 2>&1 &
+T2_PID=$!
+echo $T2_PID > "$SCRIPT_DIR/.trading2.pid"
+echo "✓ Trading2 bot iniciado (PID: $T2_PID)"
+
 # ─── Lanzar Altcoin Bot ──────────────────────────────────────────────────────
 echo "Iniciando Multi-Altcoin bot..."
 nohup python3 altcoin_bot.py >> "$LOG_FILE" 2>&1 &
 ALT_PID=$!
 echo $ALT_PID > "$SCRIPT_DIR/.altcoin.pid"
 echo "✓ Altcoin bot iniciado (PID: $ALT_PID)"
+
+# ─── Lanzar SP500 Bot ────────────────────────────────────────────────────────
+echo "Iniciando SP500 + ETFs bot..."
+if grep -q "ALPACA_API_KEY" "$BOT_DIR/.env" && ! grep -q "ALPACA_API_KEY=tu_" "$BOT_DIR/.env"; then
+    nohup python3 sp500_bot.py >> "$LOG_FILE" 2>&1 &
+    SP_PID=$!
+    echo $SP_PID > "$SCRIPT_DIR/.sp500.pid"
+    echo "✓ SP500 bot iniciado (PID: $SP_PID)"
+    # Symlink para dashboard
+    if [ "$HAS_NODE" = true ]; then
+        mkdir -p "$DASHBOARD_DIR/public/sp500_data"
+        ln -sf "$BOT_DIR/sp500_data/state.json" "$DASHBOARD_DIR/public/sp500_data/state.json" 2>/dev/null
+    fi
+else
+    echo "⚠ SP500 bot saltado (configurá ALPACA_API_KEY en .env)"
+fi
 
 # ─── Lanzar RSI Bot (Alpaca Paper Trading) ───────────────────────────────────
 echo "Iniciando RSI Mean Reversion bot..."
@@ -93,6 +119,13 @@ if command -v node &> /dev/null && [ -d "$DASHBOARD_DIR/node_modules" ]; then
     HAS_NODE=true
 fi
 
+# ─── Lanzar servidor local de estado ─────────────────────────────────────────
+echo "Iniciando local state server..."
+nohup python3 local_server.py > "$SCRIPT_DIR/state_server.log" 2>&1 &
+SS_PID=$!
+echo $SS_PID > "$SCRIPT_DIR/.stateserver.pid"
+echo "✓ State server iniciado (puerto 8765)"
+
 if [ "$HAS_NODE" = true ]; then
     echo "Iniciando dashboard..."
     cd "$DASHBOARD_DIR"
@@ -106,8 +139,10 @@ fi
 
 echo ""
 echo "✅ Todo corriendo!"
-echo "   Binance BTC: ciclos cada 15 min"
+echo "   Binance BTC: ciclos cada 3 min"
+echo "   Trading2:    ciclos cada 5 min (MACD + RSI+VWAP + CVD, modo VOTE)"
 echo "   Altcoins:    ciclos cada 15 min (top 20 por volumen)"
+echo "   SP500+ETFs:  ciclos cada 5 min (mercado abierto)"
 echo "   RSI S&P500:  opera al cierre del mercado US"
 echo "   Log: tail -f $LOG_FILE"
 echo ""
@@ -116,13 +151,22 @@ osascript -e 'display notification "Binance + Altcoins + RSI Bot iniciados" with
 tail -f "$LOG_FILE"
 
 # ─── Sincronizar paper trading state con dashboard ────────────────────────────
+# ─── Lanzar servidor local de estado ─────────────────────────────────────────
+echo "Iniciando local state server..."
+nohup python3 local_server.py > "$SCRIPT_DIR/state_server.log" 2>&1 &
+SS_PID=$!
+echo $SS_PID > "$SCRIPT_DIR/.stateserver.pid"
+echo "✓ State server iniciado (puerto 8765)"
+
 if [ "$HAS_NODE" = true ]; then
     mkdir -p "$DASHBOARD_DIR/public/paper_trading"
     # Symlinks para que Vite sirva los JSON del paper trading
-    ln -sf "$BOT_DIR/paper_trading/binance_state.json" "$DASHBOARD_DIR/public/paper_trading/binance_state.json" 2>/dev/null
+    ln -sf "$BOT_DIR/paper_trading/binance_state.json"  "$DASHBOARD_DIR/public/paper_trading/binance_state.json"  2>/dev/null
+    ln -sf "$BOT_DIR/paper_trading/trading2_state.json" "$DASHBOARD_DIR/public/trading2_data/state.json"          2>/dev/null
+    mkdir -p "$DASHBOARD_DIR/public/trading2_data"
     mkdir -p "$DASHBOARD_DIR/public/rsi_bot_data"
-    ln -sf "$BOT_DIR/rsi_bot_data/state.json" "$DASHBOARD_DIR/public/rsi_bot_data/state.json" 2>/dev/null
+    ln -sf "$BOT_DIR/rsi_bot_data/state.json"  "$DASHBOARD_DIR/public/rsi_bot_data/state.json"  2>/dev/null
         mkdir -p "$DASHBOARD_DIR/public/altcoin_data"
-    ln -sf "$BOT_DIR/altcoin_data/state.json" "$DASHBOARD_DIR/public/altcoin_data/state.json" 2>/dev/null
+    ln -sf "$BOT_DIR/altcoin_data/state.json"  "$DASHBOARD_DIR/public/altcoin_data/state.json"  2>/dev/null
     echo "✓ Paper trading states vinculados al dashboard"
 fi

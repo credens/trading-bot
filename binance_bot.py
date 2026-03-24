@@ -37,7 +37,7 @@ LEVERAGE = int(os.getenv("LEVERAGE", "3"))
 MAX_RISK_PCT = float(os.getenv("MAX_RISK_PCT", "0.02"))   # 2% del capital por trade
 MAX_POSITION_PCT = float(os.getenv("MAX_POSITION_PCT", "0.10"))  # máx 10% en una posición
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
-INTERVAL_MINUTES = int(os.getenv("INTERVAL_MINUTES", "15"))  # analizar cada 15 min
+INTERVAL_MINUTES = int(os.getenv("INTERVAL_MINUTES", "3"))  # analizar cada 3 min
 
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
@@ -60,12 +60,12 @@ try:
 except ImportError:
     BTC_RAG_AVAILABLE = False
 
-import anthropic as anthropic_lib
-ai_client = anthropic_lib.Anthropic(api_key=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
+from ai_client import call_ai, parse_json_response, is_available, get_model_info
+log.info(f"AI Engine: {get_model_info()}")
 
 # ─── Indicadores Técnicos ──────────────────────────────────────────────────────
 
-def fetch_ohlcv(client, symbol: str = SYMBOL, interval: str = "15m", limit: int = 100) -> pd.DataFrame:
+def fetch_ohlcv(client, symbol: str = SYMBOL, interval: str = "15m", limit: int = 300) -> pd.DataFrame:
     """Trae velas OHLCV de Binance Futures."""
     klines = client.futures_klines(symbol=symbol, interval=interval, limit=limit)
     df = pd.DataFrame(klines, columns=[
@@ -77,6 +77,65 @@ def fetch_ohlcv(client, symbol: str = SYMBOL, interval: str = "15m", limit: int 
         df[col] = df[col].astype(float)
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
     return df
+
+
+def fetch_macro_trend(client) -> dict:
+    """
+    Calcula la tendencia macro usando velas de 1h (200 velas = ~8 días).
+    Retorna el lado permitido y métricas de contexto.
+
+    Criterios (se necesitan al menos 2 de 3 para declarar tendencia):
+      - EMA50 > EMA200 en 1h  → bullish
+      - Precio > EMA50 en 1h  → bullish
+      - MACD hist > 0 en 1h   → bullish
+    """
+    try:
+        df = fetch_ohlcv(client, interval="1h", limit=220)
+        close = df["close"]
+
+        ema50_1h  = close.ewm(span=50,  adjust=False).mean()
+        ema200_1h = close.ewm(span=200, adjust=False).mean()
+        ema12_1h  = close.ewm(span=12,  adjust=False).mean()
+        ema26_1h  = close.ewm(span=26,  adjust=False).mean()
+        macd_1h   = ema12_1h - ema26_1h
+        sig_1h    = macd_1h.ewm(span=9, adjust=False).mean()
+        hist_1h   = macd_1h - sig_1h
+
+        price     = float(close.iloc[-1])
+        e50       = float(ema50_1h.iloc[-1])
+        e200      = float(ema200_1h.iloc[-1])
+        hist      = float(hist_1h.iloc[-1])
+
+        bull_signals = sum([
+            e50 > e200,          # estructura macro alcista
+            price > e50,         # precio sobre media rápida
+            hist > 0,            # momentum positivo
+        ])
+        bear_signals = sum([
+            e50 < e200,
+            price < e50,
+            hist < 0,
+        ])
+
+        if bull_signals >= 2:
+            macro = "bullish"
+        elif bear_signals >= 2:
+            macro = "bearish"
+        else:
+            macro = "neutral"
+
+        log.info(f"  Macro 1h: EMA50={e50:,.0f} EMA200={e200:,.0f} | bull={bull_signals} bear={bear_signals} → {macro}")
+        return {
+            "macro_trend":   macro,
+            "macro_bull":    bull_signals,
+            "macro_bear":    bear_signals,
+            "ema50_1h":      round(e50, 2),
+            "ema200_1h":     round(e200, 2),
+            "price_vs_ema50_1h": round((price - e50) / e50 * 100, 2),
+        }
+    except Exception as e:
+        log.warning(f"Error calculando tendencia macro: {e}")
+        return {"macro_trend": "neutral", "macro_bull": 0, "macro_bear": 0}
 
 
 def calculate_indicators(df: pd.DataFrame) -> dict:
@@ -175,8 +234,14 @@ def get_market_context(client) -> dict:
         return {}
 
 
-# ─── Análisis con Claude ───────────────────────────────────────────────────────
+# ─── ESTRATEGIAS DE TRADING (3 independientes + votación) ─────────────────────
+#
+# Estrategia 1 — MACD Momentum (15m): captura cruces MACD + volumen + EMA
+# Estrategia 2 — RSI + VWAP Reversal (5m): opera extremos RSI con VWAP
+# Estrategia 3 — CVD Divergence (15m): detecta divergencias precio vs flujo
+# Voto: necesitan ≥2/3 para entrar. Empate → FLAT.
 
+# ── ANÁLISIS PROMPT LEGACY (no usado) ───────────────────────────────────────
 ANALYSIS_PROMPT = """Eres un trader experto en BTC Futures con enfoque en gestión de riesgo. Analizá la siguiente situación de mercado y decidí si operar.
 
 PRECIO ACTUAL BTC: ${price:,.2f}
@@ -204,13 +269,16 @@ PARÁMETROS DEL BOT:
 - Posición actual: {current_position}
 - Stop loss: automático en 2% del capital
 
-INSTRUCCIONES:
-1. Analizá la confluencia de señales técnicas
-2. Considerá el contexto macro (funding, OI, volumen)
-3. La estrategia es HÍBRIDA: podés ir long, short o quedarte flat
-4. Con capital pequeño (<$500), la preservación de capital es prioridad
-5. Solo entrá si hay confluencia clara de al menos 3 señales
-6. Si ya hay posición abierta, decidí si mantener, cerrar o invertir
+REGLAS ESTRICTAS — SEGUIR AL PIE DE LA LETRA:
+1. Si trend=bearish → PROHIBIDO abrir LONG. Solo SHORT o FLAT.
+2. Si trend=bullish → PROHIBIDO abrir SHORT. Solo LONG o FLAT.
+3. Si trend=neutral → podés ir en cualquier dirección pero con alta confluencia.
+4. MACD cross bullish + trend bearish = señal contradictoria → FLAT
+5. RSI<35 + trend bearish = rebote posible pero arriesgado → preferí FLAT
+6. Solo entrá si la tendencia EMA Y al menos 2 indicadores más confirman la dirección
+7. Con funding rate positivo alto (>0.03%) → favorece SHORT
+8. stop_loss: 2-3% | take_profit: 5-8%
+9. Si tenés dudas → FLAT. Preservar capital es prioridad.
 
 Respondé ÚNICAMENTE con JSON válido:
 {{
@@ -219,9 +287,9 @@ Respondé ÚNICAMENTE con JSON válido:
   "reasoning": "análisis de máximo 3 oraciones",
   "key_signals": ["señal1", "señal2", "señal3"],
   "entry_price": {price:.2f},
-  "stop_loss_pct": 0.015,
-  "take_profit_pct": 0.03,
-  "position_size_pct": 0.05
+  "stop_loss_pct": 0.025,
+  "take_profit_pct": 0.06,
+  "position_size_pct": 0.10
 }}
 
 FLAT = no operar / cerrar posición si hay una abierta
@@ -232,51 +300,410 @@ position_size_pct: % del capital a usar (máx 0.10 = 10%)
 """
 
 
-def analyze_with_claude(indicators: dict, context: dict, capital: float, current_position: str) -> Optional[dict]:
-    """Llama a Claude con todos los indicadores y pide decisión de trading."""
-    if not ai_client:
-        log.error("Claude no inicializado. Configurá ANTHROPIC_API_KEY.")
-        return None
+def _analyze_legacy(indicators: dict, context: dict, capital: float, current_position: str) -> Optional[dict]:
+    """LEGACY — reemplazada por run_strategies(). Se mantiene por referencia.
+    Análisis técnico puro — sin LLM. Doble filtro de tendencia.
 
-    candles_str = "\n".join([
-        f"  Vela {i+1}: open={c['open']:,.0f} close={c['close']:,.0f} ({c['change_pct']:+.2f}%)"
-        for i, c in enumerate(indicators.get("last_3_candles", []))
-    ])
+    LÓGICA EN CAPAS:
+      1. FILTRO MACRO (bloqueante, 1h): macro_trend define el único lado
+         permitido. Si macro es bearish → solo SHORT. Si bullish → solo LONG.
+         Si neutral → requiere que el 15m sea claro, si no FLAT.
 
-    prompt = ANALYSIS_PROMPT.format(
-        **indicators,
-        **context,
-        candles_str=candles_str,
-        leverage=LEVERAGE,
-        capital=capital,
-        current_position=current_position,
+      2. CONFIRMACIÓN 15m: la EMA50/200 de 15m debe estar alineada con el
+         macro. Si contradice → FLAT. Si confirma → continúa al score.
+
+      3. SCORE DE CONFLUENCIA: MACD, RSI, BB, volumen, funding, cambio 24h.
+         Mínimo score 2 para entrar (MEDIUM) o 3 para HIGH.
+
+      4. GESTIÓN DE POSICIÓN EXISTENTE.
+    """
+    rsi            = indicators.get("rsi", 50)
+    bb_pct         = indicators.get("bb_pct", 0.5)
+    macd_hist      = indicators.get("macd_hist", 0)
+    macd_cross     = indicators.get("macd_cross", "neutral")
+    vol_ratio      = indicators.get("vol_ratio", 1)
+    atr_pct        = indicators.get("atr_pct", 1)
+    trend_15m      = indicators.get("trend", "neutral")       # EMA50/200 en 15m (ahora con 300 velas = válida)
+    macro_trend    = indicators.get("macro_trend", "neutral") # EMA50/200 en 1h (fuente de verdad macro)
+    funding        = context.get("funding_rate", 0)
+    change_24h     = context.get("change_24h_pct", 0)
+    price          = indicators.get("price", 0)
+    price_vs_ema50 = indicators.get("price_vs_ema50", 0)
+
+    signals = []
+
+    # ── CAPA 1: FILTRO MACRO 1h (fuente de verdad) ────────────────────────────
+    # La tendencia de 1h manda. Si no hay tendencia clara en 1h → FLAT.
+    if macro_trend == "bullish":
+        allowed_side = "LONG"
+        signals.append(f"Macro 1h: BULLISH → solo LONG")
+    elif macro_trend == "bearish":
+        allowed_side = "SHORT"
+        signals.append(f"Macro 1h: BEARISH → solo SHORT")
+    else:
+        # Macro neutral: solo operar si el 15m es muy claro (ambas EMAs alineadas)
+        if trend_15m == "bullish":
+            allowed_side = "LONG"
+            signals.append("Macro neutral + 15m bullish → LONG con cautela")
+        elif trend_15m == "bearish":
+            allowed_side = "SHORT"
+            signals.append("Macro neutral + 15m bearish → SHORT con cautela")
+        else:
+            log.info("  Técnico: macro neutral + 15m neutral → FLAT")
+            return _make_result("FLAT", "MEDIUM", "Sin tendencia en ningún timeframe", signals, price, atr_pct)
+
+    # ── CAPA 2: CONFIRMACIÓN 15m ──────────────────────────────────────────────
+    # El 15m no puede contradecir al macro. Si lo contradice → FLAT.
+    # Si el 15m confirma → bonus en el score. Si es neutral → pasa igual.
+    trend_15m_confirms = (
+        (allowed_side == "LONG"  and trend_15m == "bullish") or
+        (allowed_side == "SHORT" and trend_15m == "bearish")
+    )
+    trend_15m_contradicts = (
+        (allowed_side == "LONG"  and trend_15m == "bearish") or
+        (allowed_side == "SHORT" and trend_15m == "bullish")
     )
 
-    # Enriquecer con RAG si está disponible
-    if BTC_RAG_AVAILABLE:
-        indicators_for_rag = {**indicators, **context, "capital": capital, "current_position": current_position, "leverage": LEVERAGE}
-        similar = find_similar_btc_patterns(indicators_for_rag, n=5)
-        ml_score = score_btc_pattern(indicators_for_rag)
-        prompt = build_btc_enriched_prompt(indicators_for_rag, similar, ml_score)
-        if similar:
-            log.info(f"    BTC RAG: {len(similar)} patrones similares | ML score: {ml_score:.1%}")
+    if trend_15m_contradicts:
+        log.info(f"  Técnico: 15m {trend_15m} contradice macro {macro_trend} → FLAT")
+        # Si hay posición abierta contra la macro, cerrar
+        if current_position != "FLAT" and current_position != allowed_side:
+            return _make_result("FLAT", "HIGH",
+                                f"15m contradice macro — cerrar {current_position}",
+                                signals, price, atr_pct)
+        return _make_result("FLAT", "MEDIUM",
+                            f"15m {trend_15m} vs macro {macro_trend} — esperando alineación",
+                            signals, price, atr_pct)
 
-    try:
-        response = ai_client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=600,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        raw = response.content[0].text.strip()
-        if "```" in raw:
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        return json.loads(raw.strip())
+    # ── CAPA 3: SCORE DE CONFLUENCIA ─────────────────────────────────────────
+    score = 0
 
-    except Exception as e:
-        log.error(f"Error analizando con Claude: {e}")
-        return None
+    # Bonus si el 15m confirma al macro
+    if trend_15m_confirms:
+        score += 1
+        signals.append(f"15m {trend_15m} confirma macro ✓")
+
+    # MACD — timing de entrada
+    if allowed_side == "LONG":
+        if macd_cross == "bullish":
+            score += 3; signals.append("MACD bullish cross ✓")
+        elif macd_hist > 0:
+            score += 1; signals.append(f"MACD hist positivo ({macd_hist:.1f})")
+        elif macd_cross == "bearish" or macd_hist < 0:
+            score -= 1; signals.append("MACD en contra")
+    else:  # SHORT
+        if macd_cross == "bearish":
+            score += 3; signals.append("MACD bearish cross ✓")
+        elif macd_hist < 0:
+            score += 1; signals.append(f"MACD hist negativo ({macd_hist:.1f})")
+        elif macd_cross == "bullish" or macd_hist > 0:
+            score -= 1; signals.append("MACD en contra")
+
+    # RSI — zona óptima (momentum, no rebote)
+    if allowed_side == "LONG":
+        if 40 <= rsi <= 55:
+            score += 2; signals.append(f"RSI zona óptima long ({rsi:.0f})")
+        elif rsi < 40:
+            score += 1; signals.append(f"RSI bajo ({rsi:.0f})")
+        elif rsi > 70:
+            score -= 2; signals.append(f"RSI sobrecomprado ({rsi:.0f})")
+        elif rsi > 60:
+            score -= 1; signals.append(f"RSI elevado ({rsi:.0f})")
+    else:  # SHORT
+        if 45 <= rsi <= 60:
+            score += 2; signals.append(f"RSI zona óptima short ({rsi:.0f})")
+        elif rsi > 60:
+            score += 1; signals.append(f"RSI alto ({rsi:.0f})")
+        elif rsi < 30:
+            score -= 2; signals.append(f"RSI sobrevendido ({rsi:.0f}) — riesgo rebote")
+        elif rsi < 40:
+            score -= 1; signals.append(f"RSI bajo ({rsi:.0f})")
+
+    # Bollinger Bands — timing de entrada
+    if allowed_side == "LONG":
+        if bb_pct < 0.2:
+            score += 2; signals.append(f"BB lower band ({bb_pct:.0%})")
+        elif 0.2 <= bb_pct <= 0.5:
+            score += 1; signals.append(f"BB zona media-baja ({bb_pct:.0%})")
+        elif bb_pct > 0.85:
+            score -= 2; signals.append(f"BB upper band ({bb_pct:.0%})")
+    else:  # SHORT
+        if bb_pct > 0.8:
+            score += 2; signals.append(f"BB upper band ({bb_pct:.0%})")
+        elif 0.5 <= bb_pct <= 0.8:
+            score += 1; signals.append(f"BB zona media-alta ({bb_pct:.0%})")
+        elif bb_pct < 0.15:
+            score -= 2; signals.append(f"BB lower band ({bb_pct:.0%})")
+
+    # Precio vs EMA50 15m — no cazar movimientos extendidos
+    if allowed_side == "LONG" and price_vs_ema50 > 3:
+        score -= 1; signals.append(f"Precio alejado de EMA50 (+{price_vs_ema50:.1f}%)")
+    elif allowed_side == "SHORT" and price_vs_ema50 < -3:
+        score -= 1; signals.append(f"Precio alejado de EMA50 ({price_vs_ema50:.1f}%)")
+
+    # Volumen
+    if vol_ratio > 1.8:
+        score += 1; signals.append(f"Volumen alto ({vol_ratio:.1f}x)")
+
+    # Funding rate
+    if allowed_side == "LONG"  and funding < -0.02:
+        score += 1; signals.append(f"Funding negativo ({funding:.4f}%)")
+    elif allowed_side == "SHORT" and funding > 0.02:
+        score += 1; signals.append(f"Funding positivo ({funding:.4f}%)")
+
+    # Cambio 24h
+    if allowed_side == "LONG"  and change_24h > 1.5:
+        score += 1; signals.append(f"Momentum 24h +{change_24h:.1f}%")
+    elif allowed_side == "SHORT" and change_24h < -1.5:
+        score += 1; signals.append(f"Momentum 24h {change_24h:.1f}%")
+
+    log.info(f"  Técnico: macro={macro_trend} 15m={trend_15m} score={score:+d} lado={allowed_side}")
+
+    # ── CAPA 4: GESTIÓN DE POSICIÓN ACTUAL ────────────────────────────────────
+    sl_pct = round(max(atr_pct * 1.5 / 100, 0.02), 4)
+    tp_pct = round(sl_pct * 2.5, 4)
+
+    if current_position == allowed_side:
+        if score >= 2:
+            return _make_result("HOLD", "MEDIUM",
+                                f"Manteniendo {allowed_side} (score {score:+d})",
+                                signals, price, atr_pct)
+        else:
+            return _make_result("FLAT", "MEDIUM",
+                                f"Señal debilitada (score {score:+d}) → cerrando {allowed_side}",
+                                signals, price, atr_pct)
+
+    if current_position != "FLAT" and current_position != allowed_side:
+        return _make_result("FLAT", "HIGH",
+                            f"Posición {current_position} contra macro {macro_trend} → cerrar",
+                            signals, price, atr_pct)
+
+    # ── NUEVA ENTRADA ─────────────────────────────────────────────────────────
+    if score >= 3:
+        decision, confidence = allowed_side, "HIGH"
+    elif score >= 2:
+        decision, confidence = allowed_side, "MEDIUM"
+    else:
+        decision, confidence = "FLAT", "MEDIUM"
+
+    reasoning = f"Macro {macro_trend} | 15m {trend_15m} | Score {score:+d}"
+    log.info(f"  → {decision} | {confidence}")
+
+    return {
+        "decision":          decision,
+        "confidence":        confidence,
+        "reasoning":         reasoning,
+        "key_signals":       signals,
+        "entry_price":       price,
+        "stop_loss_pct":     sl_pct,
+        "take_profit_pct":   tp_pct,
+        "position_size_pct": 0.10 if confidence == "HIGH" else 0.06,
+    }
+
+
+def _make_result(decision: str, confidence: str, reasoning: str,
+                 signals: list, price: float, atr_pct: float) -> dict:
+    sl_pct = round(max(atr_pct * 1.5 / 100, 0.02), 4)
+    tp_pct = round(sl_pct * 2.5, 4)
+    return {
+        "decision": decision, "confidence": confidence, "reasoning": reasoning,
+        "key_signals": signals, "entry_price": price,
+        "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
+        "position_size_pct": 0.10 if confidence == "HIGH" else 0.06,
+    }
+
+
+def _strat_result(decision, confidence, reasoning, signals, price, atr_pct, name):
+    sl_pct = round(max(atr_pct * 1.5 / 100, 0.018), 4)
+    tp_pct = round(sl_pct * 2.5, 4)
+    log.info(f"  [{name}] → {decision} ({confidence}) | {reasoning}")
+    return {
+        "decision": decision, "confidence": confidence,
+        "reasoning": f"[{name}] {reasoning}", "key_signals": signals,
+        "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
+        "position_size_pct": 0.10 if confidence == "HIGH" else 0.06,
+        "_strategy": name,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ESTRATEGIA 1 — MACD MOMENTUM (15m)
+# Entra en cruces MACD reales con volumen + precio del lado correcto de EMA50
+# ══════════════════════════════════════════════════════════════════════════════
+def strategy_macd_momentum(client, current_position: str, capital: float) -> dict:
+    df = fetch_ohlcv(client, interval="15m", limit=150)
+    price = float(df["close"].iloc[-1])
+    close = df["close"]; volume = df["volume"]
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    macd = ema12 - ema26; signal = macd.ewm(span=9, adjust=False).mean(); hist = macd - signal
+    ema50 = close.ewm(span=50, adjust=False).mean()
+    ema200 = close.ewm(span=200, adjust=False).mean()
+    vol_sma = volume.rolling(20).mean()
+    vol_ratio = float(volume.iloc[-1] / vol_sma.iloc[-1])
+    tr = pd.concat([df["high"]-df["low"], (df["high"]-close.shift()).abs(), (df["low"]-close.shift()).abs()], axis=1).max(axis=1)
+    atr_pct = float(tr.rolling(14).mean().iloc[-1] / price * 100)
+    hist_now = float(hist.iloc[-1]); hist_prev = float(hist.iloc[-2])
+    ema50_val = float(ema50.iloc[-1]); ema200_val = float(ema200.iloc[-1])
+    trend = "bullish" if ema50_val > ema200_val else "bearish"
+    bullish_cross = (hist_now > 0 and hist_prev <= 0) or (float(hist.iloc[-2]) > 0 and float(hist.iloc[-3]) <= 0)
+    bearish_cross = (hist_now < 0 and hist_prev >= 0) or (float(hist.iloc[-2]) < 0 and float(hist.iloc[-3]) >= 0)
+    name = "MACD_MOM"
+    if current_position == "LONG":
+        if hist_now < 0 or price < ema50_val * 0.998:
+            return _strat_result("FLAT", "HIGH", "MACD neg o precio bajo EMA50 → cierre", ["Salida MACD"], price, atr_pct, name)
+        return _strat_result("HOLD", "MEDIUM", "LONG activo, MACD positivo", ["Manteniendo long"], price, atr_pct, name)
+    if current_position == "SHORT":
+        if hist_now > 0 or price > ema50_val * 1.002:
+            return _strat_result("FLAT", "HIGH", "MACD pos o precio sobre EMA50 → cierre", ["Salida MACD"], price, atr_pct, name)
+        return _strat_result("HOLD", "MEDIUM", "SHORT activo, MACD negativo", ["Manteniendo short"], price, atr_pct, name)
+    if bullish_cross and trend == "bullish" and price > ema50_val:
+        signals = ["MACD bullish cross ✓", "Trend EMA bullish ✓"]
+        score = sum([vol_ratio > 1.8, price > ema50_val * 1.001, atr_pct < 1.5])
+        if vol_ratio > 1.8: signals.append(f"Vol {vol_ratio:.1f}x ✓")
+        return _strat_result("LONG", "HIGH" if score >= 2 else "MEDIUM",
+                             f"Bullish cross+vol {vol_ratio:.1f}x+trend {trend}", signals, price, atr_pct, name)
+    if bearish_cross and trend == "bearish" and price < ema50_val:
+        signals = ["MACD bearish cross ✓", "Trend EMA bearish ✓"]
+        score = sum([vol_ratio > 1.8, price < ema50_val * 0.999, atr_pct < 1.5])
+        if vol_ratio > 1.8: signals.append(f"Vol {vol_ratio:.1f}x ✓")
+        return _strat_result("SHORT", "HIGH" if score >= 2 else "MEDIUM",
+                             f"Bearish cross+vol {vol_ratio:.1f}x+trend {trend}", signals, price, atr_pct, name)
+    return _strat_result("FLAT", "MEDIUM", f"Sin cruce MACD válido (hist={hist_now:.1f}, trend={trend})", ["Esperando cruce"], price, atr_pct, name)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ESTRATEGIA 2 — RSI + VWAP REVERSAL (5m)
+# Opera contra extremos RSI cuando el precio se desvió del VWAP
+# ══════════════════════════════════════════════════════════════════════════════
+def strategy_rsi_vwap(client, current_position: str, capital: float) -> dict:
+    df = fetch_ohlcv(client, interval="5m", limit=200)
+    price = float(df["close"].iloc[-1])
+    close = df["close"]; high = df["high"]; low = df["low"]; volume = df["volume"]
+    name = "RSI_VWAP"
+    delta = close.diff(); gain = delta.clip(lower=0).rolling(14).mean(); loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rsi_s = 100 - (100 / (1 + gain / loss.replace(0, np.nan)))
+    rsi = float(rsi_s.iloc[-1]); rsi_prev = float(rsi_s.iloc[-2])
+    typical = (high + low + close) / 3
+    vwap = float((typical * volume).cumsum().iloc[-1] / volume.cumsum().iloc[-1])
+    vwap_dev = (price - vwap) / vwap * 100
+    tr = pd.concat([high-low, (high-close.shift()).abs(), (low-close.shift()).abs()], axis=1).max(axis=1)
+    atr_pct = float(tr.rolling(14).mean().iloc[-1] / price * 100)
+    sma20 = close.rolling(20).mean(); std20 = close.rolling(20).std()
+    bb_pct = float(((close - (sma20 - 2*std20)) / (4*std20)).iloc[-1])
+    if current_position == "LONG":
+        if rsi > 55 or price >= vwap * 1.003:
+            return _strat_result("FLAT", "HIGH", f"Reversión completada (RSI {rsi:.0f})", ["Objetivo alcanzado"], price, atr_pct, name)
+        return _strat_result("HOLD", "MEDIUM", f"LONG reversión en curso RSI {rsi:.0f}", [f"RSI {rsi:.0f}"], price, atr_pct, name)
+    if current_position == "SHORT":
+        if rsi < 45 or price <= vwap * 0.997:
+            return _strat_result("FLAT", "HIGH", f"Reversión completada (RSI {rsi:.0f})", ["Objetivo alcanzado"], price, atr_pct, name)
+        return _strat_result("HOLD", "MEDIUM", f"SHORT reversión en curso RSI {rsi:.0f}", [f"RSI {rsi:.0f}"], price, atr_pct, name)
+    if rsi < 32 and vwap_dev < -0.6:
+        signals = [f"RSI sobrevendido ({rsi:.0f})", f"Dev VWAP {vwap_dev:.2f}%"]
+        score = sum([rsi > rsi_prev, bb_pct < 0.1, rsi < 25])
+        if rsi > rsi_prev: signals.append("RSI girando arriba ✓")
+        return _strat_result("LONG", "HIGH" if score >= 2 else "MEDIUM", f"RSI {rsi:.0f}+VWAP {vwap_dev:.2f}%", signals, price, atr_pct, name)
+    if rsi > 68 and vwap_dev > 0.6:
+        signals = [f"RSI sobrecomprado ({rsi:.0f})", f"Dev VWAP {vwap_dev:.2f}%"]
+        score = sum([rsi < rsi_prev, bb_pct > 0.9, rsi > 75])
+        if rsi < rsi_prev: signals.append("RSI girando abajo ✓")
+        return _strat_result("SHORT", "HIGH" if score >= 2 else "MEDIUM", f"RSI {rsi:.0f}+VWAP {vwap_dev:.2f}%", signals, price, atr_pct, name)
+    return _strat_result("FLAT", "MEDIUM", f"Sin extremo (RSI {rsi:.0f}, VWAP dev {vwap_dev:+.2f}%)", ["Esperando extremo RSI+VWAP"], price, atr_pct, name)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ESTRATEGIA 3 — CVD DIVERGENCE (15m)
+# Divergencia entre precio y flujo neto de dinero (taker buy vs sell)
+# ══════════════════════════════════════════════════════════════════════════════
+def strategy_cvd_divergence(client, current_position: str, capital: float) -> dict:
+    df = fetch_ohlcv(client, interval="15m", limit=150)
+    price = float(df["close"].iloc[-1])
+    close = df["close"]; volume = df["volume"]
+    name = "CVD_DIV"
+    taker_sell = volume - df["taker_buy_base"]
+    cvd = (df["taker_buy_base"] - taker_sell).cumsum().ewm(span=5, adjust=False).mean()
+    tr = pd.concat([df["high"]-df["low"], (df["high"]-close.shift()).abs(), (df["low"]-close.shift()).abs()], axis=1).max(axis=1)
+    atr_pct = float(tr.rolling(14).mean().iloc[-1] / price * 100)
+    N = 5
+    price_chg = float(close.iloc[-1] - close.iloc[-N]) / float(close.iloc[-N]) * 100
+    cvd_chg = float(cvd.iloc[-1] - cvd.iloc[-N])
+    price_dir = "up" if price_chg > 0 else "down"
+    cvd_dir = "up" if cvd_chg > 0 else "down"
+    price_moved = abs(price_chg) > 0.4
+    cvd_moved = abs(cvd_chg) > (volume.iloc[-N:].mean() * 0.05)
+    ema50 = close.ewm(span=50, adjust=False).mean(); ema200 = close.ewm(span=200, adjust=False).mean()
+    macro = "bullish" if float(ema50.iloc[-1]) > float(ema200.iloc[-1]) else "bearish"
+    delta = close.diff(); gain = delta.clip(lower=0).rolling(14).mean(); loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rsi = float((100 - (100 / (1 + gain / loss.replace(0, np.nan)))).iloc[-1])
+    if current_position == "LONG":
+        if cvd_dir == "down" and price_dir == "down":
+            return _strat_result("FLAT", "HIGH", "CVD y precio a la baja → cierre LONG", ["Divergencia resuelta"], price, atr_pct, name)
+        return _strat_result("HOLD", "MEDIUM", f"LONG activo CVD:{cvd_dir}", [f"CVD {cvd_dir}"], price, atr_pct, name)
+    if current_position == "SHORT":
+        if cvd_dir == "up" and price_dir == "up":
+            return _strat_result("FLAT", "HIGH", "CVD y precio al alza → cierre SHORT", ["Divergencia resuelta"], price, atr_pct, name)
+        return _strat_result("HOLD", "MEDIUM", f"SHORT activo CVD:{cvd_dir}", [f"CVD {cvd_dir}"], price, atr_pct, name)
+    if price_dir == "up" and cvd_dir == "down" and price_moved and cvd_moved and rsi < 72:
+        signals = [f"Precio +{price_chg:.2f}% pero CVD bajando", "Dinero agresivo vendiendo"]
+        score = sum([macro == "bearish", rsi > 60, abs(cvd_chg) > volume.iloc[-N:].mean() * 0.15])
+        if macro == "bearish": signals.append("Macro bearish confirma ✓")
+        return _strat_result("SHORT", "HIGH" if score >= 2 else "MEDIUM",
+                             f"Bearish CVD div | precio {price_chg:+.2f}% | CVD ↓", signals, price, atr_pct, name)
+    if price_dir == "down" and cvd_dir == "up" and price_moved and cvd_moved and rsi > 28:
+        signals = [f"Precio {price_chg:.2f}% pero CVD subiendo", "Dinero agresivo comprando"]
+        score = sum([macro == "bullish", rsi < 40, abs(cvd_chg) > volume.iloc[-N:].mean() * 0.15])
+        if macro == "bullish": signals.append("Macro bullish confirma ✓")
+        return _strat_result("LONG", "HIGH" if score >= 2 else "MEDIUM",
+                             f"Bullish CVD div | precio {price_chg:+.2f}% | CVD ↑", signals, price, atr_pct, name)
+    return _strat_result("FLAT", "MEDIUM", f"Sin divergencia (precio {price_dir} {price_chg:+.2f}%, CVD {cvd_dir})", ["Esperando divergencia"], price, atr_pct, name)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SISTEMA DE VOTACIÓN — necesita ≥2/3 para entrar
+# ══════════════════════════════════════════════════════════════════════════════
+def run_strategies(client, current_position: str, capital: float) -> dict:
+    """Ejecuta las 3 estrategias y decide por votación (≥2/3)."""
+    r1 = strategy_macd_momentum(client, current_position, capital)
+    r2 = strategy_rsi_vwap(client, current_position, capital)
+    r3 = strategy_cvd_divergence(client, current_position, capital)
+
+    votes = {"LONG": 0, "SHORT": 0, "FLAT": 0, "HOLD": 0}
+    for r in [r1, r2, r3]:
+        votes[r.get("decision", "FLAT")] = votes.get(r.get("decision", "FLAT"), 0) + 1
+    votes["FLAT"] += votes.pop("HOLD", 0)
+    long_v = votes["LONG"]; short_v = votes["SHORT"]
+    log.info(f"  VOTE → LONG:{long_v} SHORT:{short_v} FLAT:{votes['FLAT']}")
+    for r in [r1, r2, r3]:
+        log.info(f"    {r['_strategy']}: {r['decision']} — {r['reasoning']}")
+
+    price = r1["entry_price"]
+    sl_pct = max(r["stop_loss_pct"] for r in [r1, r2, r3])
+    tp_pct = max(r["take_profit_pct"] for r in [r1, r2, r3])
+    all_signals = []
+    for r in [r1, r2, r3]:
+        all_signals.extend(r.get("key_signals", [])[:2])
+
+    if long_v >= 2:
+        conf = "HIGH" if long_v == 3 else "MEDIUM"
+        return {"decision": "LONG", "confidence": conf,
+                "reasoning": f"Voto {long_v}/3 LONG", "key_signals": all_signals,
+                "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
+                "position_size_pct": 0.10 if conf == "HIGH" else 0.06}
+    if short_v >= 2:
+        conf = "HIGH" if short_v == 3 else "MEDIUM"
+        return {"decision": "SHORT", "confidence": conf,
+                "reasoning": f"Voto {short_v}/3 SHORT", "key_signals": all_signals,
+                "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
+                "position_size_pct": 0.10 if conf == "HIGH" else 0.06}
+    # Mayoría HOLD — mantener posición
+    hold_rs = [r for r in [r1, r2, r3] if r["decision"] == "HOLD"]
+    if len(hold_rs) >= 2:
+        return {**hold_rs[0], "decision": "HOLD", "confidence": "MEDIUM", "reasoning": "Mayoría HOLD"}
+    return {"decision": "FLAT", "confidence": "MEDIUM",
+            "reasoning": f"Sin mayoría (L:{long_v} S:{short_v} F:{votes['FLAT']}) → esperando",
+            "key_signals": ["Señales divididas"], "entry_price": price,
+            "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct, "position_size_pct": 0.06}
 
 
 # ─── Ejecución de Órdenes ──────────────────────────────────────────────────────
@@ -425,6 +852,29 @@ def run_cycle(client, paper=None):
     log.info(f"CICLO — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log.info(f"{'#'*55}")
 
+    # 0. Verificar cierre manual
+    if DRY_RUN and paper:
+        from paper_trading import BINANCE_STATE
+        import json as _json
+        try:
+            raw = _json.loads(BINANCE_STATE.read_text()) if BINANCE_STATE.exists() else {}
+            if raw.get("manual_close"):
+                log.info("🛑 CIERRE MANUAL solicitado desde dashboard")
+                open_trade = paper.get_binance_position()
+                if open_trade:
+                    # Obtener precio actual para cierre
+                    _df = fetch_ohlcv(get_binance_client())
+                    _price = float(_df["close"].iloc[-1])
+                    paper.close_binance_position(_price, "MANUAL")
+                    log.info(f"  ✅ Posición cerrada manualmente a ${_price:,.2f}")
+                # Cooldown: no re-abrir por 2 horas
+                from datetime import timedelta
+                raw["manual_close"] = False
+                raw["cooldown_until"] = (datetime.now() + timedelta(minutes=3)).isoformat()
+                BINANCE_STATE.write_text(_json.dumps(raw, indent=2))
+        except Exception as e:
+            log.warning(f"Error en cierre manual: {e}")
+
     # 1. Info de cuenta
     if DRY_RUN and paper:
         paper.check_binance_stops(0)  # se actualiza con precio real abajo
@@ -446,19 +896,23 @@ def run_cycle(client, paper=None):
     indicators = calculate_indicators(df)
     context = get_market_context(client)
 
-    log.info(f"BTC: ${indicators['price']:,.2f} | RSI: {indicators['rsi']} | Tendencia: {indicators['trend']} | Vol: {indicators['vol_ratio']:.1f}x")
+    # Tendencia macro en 1h — fuente de verdad para la dirección
+    macro = fetch_macro_trend(client)
+    indicators.update(macro)  # agrega macro_trend, ema50_1h, ema200_1h, etc.
 
-    # 3. Claude decide
-    log.info("Consultando Claude...")
-    decision = analyze_with_claude(indicators, context, capital, current_position)
+    log.info(f"BTC: ${indicators['price']:,.2f} | RSI: {indicators['rsi']} | 15m: {indicators['trend']} | Macro 1h: {indicators['macro_trend']} | Vol: {indicators['vol_ratio']:.1f}x")
+
+    # 3. Estrategias votan (≥2/3 para entrar)
+    log.info("Evaluando estrategias...")
+    decision = run_strategies(client, current_position, capital)
 
     if not decision:
-        log.warning("No se pudo obtener decisión de Claude. Saltando ciclo.")
+        log.warning("No se pudo obtener decisión. Saltando ciclo.")
         return
 
     action = decision.get("decision", "FLAT")
     confidence = decision.get("confidence", "LOW")
-    log.info(f"Claude decide: {action} | Confianza: {confidence}")
+    log.info(f"Decisión: {action} | Confianza: {confidence}")
     log.info(f"  → {decision.get('reasoning', '')}")
 
     # 4. Ejecutar decisión
@@ -488,11 +942,29 @@ def run_cycle(client, paper=None):
             if confidence == "LOW":
                 paper.add_log(f"LOW confidence — no entrando")
             else:
-                open_trade = paper.get_binance_position()
-                if open_trade and open_trade.side != action:
-                    paper.close_binance_position(indicators["price"], "SIGNAL")
-                if not paper.get_binance_position():
-                    paper.open_binance_trade(decision, indicators["price"], capital, LEVERAGE)
+                # Verificar cooldown post cierre manual
+                try:
+                    raw = _json.loads(BINANCE_STATE.read_text()) if BINANCE_STATE.exists() else {}
+                    cooldown = raw.get("cooldown_until")
+                    if cooldown and datetime.fromisoformat(cooldown) > datetime.now():
+                        log.info(f"  Cooldown activo hasta {cooldown[:16]} — no re-abriendo")
+                        paper.add_log(f"Cooldown activo — esperando para re-abrir")
+                    else:
+                        open_trade = paper.get_binance_position()
+                        if open_trade and open_trade.side != action:
+                            paper.close_binance_position(indicators["price"], "SIGNAL")
+                        if not paper.get_binance_position():
+                            # Pasar trend en decision para guardarlo
+                            decision["_trend"] = indicators.get("trend", "neutral")
+                            paper.open_binance_trade(decision, indicators["price"], capital, LEVERAGE)
+                except Exception:
+                    open_trade = paper.get_binance_position()
+                    if open_trade and open_trade.side != action:
+                        paper.close_binance_position(indicators["price"], "SIGNAL")
+                    if not paper.get_binance_position():
+                        # Pasar trend en decision para guardarlo
+                        decision["_trend"] = indicators.get("trend", "neutral")
+                        paper.open_binance_trade(decision, indicators["price"], capital, LEVERAGE)
 
         paper.save()
         log.info(f"  [PAPER] Capital: ${paper.state.current_capital:.2f} | P&L: {paper.state.total_pnl:+.2f} | Win: {paper.state.win_rate:.0f}%")

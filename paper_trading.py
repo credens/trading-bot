@@ -19,8 +19,8 @@ log = logging.getLogger(__name__)
 STATE_DIR = Path("./paper_trading")
 STATE_DIR.mkdir(exist_ok=True)
 
-BINANCE_STATE = STATE_DIR / "binance_state.json"
-POLYMARKET_STATE = STATE_DIR / "polymarket_state.json"
+BINANCE_STATE  = STATE_DIR / "binance_state.json"
+TRADING2_STATE = STATE_DIR / "trading2_state.json"
 
 
 # ─── Data Classes ─────────────────────────────────────────────────────────────
@@ -28,27 +28,22 @@ POLYMARKET_STATE = STATE_DIR / "polymarket_state.json"
 @dataclass
 class Trade:
     id: str
-    bot: str                    # "binance" | "polymarket"
-    side: str                   # "LONG" | "SHORT" | "YES" | "NO"
+    bot: str                    # "binance" | "altcoin"
+    side: str                   # "LONG" | "SHORT"
     entry_price: float
     entry_time: str
-    size: float                 # USDT para binance, USDC para polymarket
+    size: float                 # USDT
     stop_loss: float
     take_profit: float
     exit_price: Optional[float] = None
     exit_time: Optional[str] = None
-    exit_reason: Optional[str] = None  # "STOP_LOSS" | "TAKE_PROFIT" | "SIGNAL" | "EXPIRED"
+    exit_reason: Optional[str] = None  # "STOP_LOSS" | "TAKE_PROFIT" | "SIGNAL" | "MANUAL"
     pnl: Optional[float] = None
     pnl_pct: Optional[float] = None
     status: str = "OPEN"        # "OPEN" | "CLOSED"
     reasoning: str = ""
     confidence: str = ""
     leverage: int = 1
-    # Polymarket extra
-    market_question: str = ""
-    market_probability: float = 0.5
-    ai_probability: float = 0.5
-    edge: float = 0.0
 
 
 @dataclass
@@ -73,6 +68,9 @@ class BotState:
     macd_cross: str = "neutral"
     funding_rate: float = 0.0
     vol_ratio: float = 1.0
+    # Trading2 extra
+    active_strategy: str = "VOTE"
+    last_vote: dict = field(default_factory=dict)
 
 
 # ─── Paper Trading Engine ──────────────────────────────────────────────────────
@@ -87,11 +85,28 @@ class PaperTradingEngine:
         if self.state_file.exists():
             try:
                 data = json.loads(self.state_file.read_text())
-                state = BotState(**{k: v for k, v in data.items() if k in BotState.__dataclass_fields__})
-                # Reconstruir trades
-                state.open_trades = [Trade(**t) for t in data.get("open_trades", [])]
-                state.closed_trades = [Trade(**t) for t in data.get("closed_trades", [])[-50:]]  # últimos 50
-                log.info(f"[{self.bot}] Estado cargado: ${state.current_capital:.2f} | {len(state.open_trades)} trades abiertos")
+                state = BotState(
+                    bot=self.bot,
+                    initial_capital=data.get("initial_capital", initial_capital),
+                    current_capital=data.get("current_capital", initial_capital),
+                    peak_capital=data.get("current_capital", initial_capital),
+                    total_pnl=data.get("total_pnl", 0.0),
+                    total_pnl_pct=data.get("total_pnl_pct", 0.0),
+                    win_rate=data.get("win_rate", 0.0),
+                    max_drawdown=data.get("max_drawdown", 0.0),
+                    cycle_log=data.get("cycle_log", []),
+                    btc_price=data.get("btc_price", 0.0),
+                    rsi=data.get("rsi", 50.0),
+                    trend=data.get("trend", "neutral"),
+                    macd_cross=data.get("macd_cross", "neutral"),
+                    funding_rate=data.get("funding_rate", 0.0),
+                    vol_ratio=data.get("vol_ratio", 1.0),
+                )
+                # Reconstruir trades desde all_closed_trades (lista más completa)
+                all_closed = data.get("all_closed_trades", data.get("closed_trades", []))
+                state.open_trades = [Trade(**{k: v for k, v in t.items() if k in Trade.__dataclass_fields__}) for t in data.get("open_trades", [])]
+                state.closed_trades = [Trade(**{k: v for k, v in t.items() if k in Trade.__dataclass_fields__}) for t in all_closed]
+                log.info(f"[{self.bot}] Estado cargado: ${state.current_capital:.2f} | {len(state.open_trades)} abiertos | {len(state.closed_trades)} cerrados")
                 return state
             except Exception as e:
                 log.warning(f"Error cargando estado: {e} — creando nuevo")
@@ -105,8 +120,69 @@ class PaperTradingEngine:
         return state
 
     def save(self):
-        data = asdict(self.state)
-        self.state_file.write_text(json.dumps(data, indent=2, default=str))
+        closed = [t for t in self.state.closed_trades if t.pnl is not None]
+        wins = [t for t in closed if t.pnl > 0]
+        open_trades = self.state.open_trades
+
+        # Recalcular P&L desde trades reales
+        total_pnl = round(sum(t.pnl for t in closed), 2)
+        reserved = sum(t.size for t in open_trades)
+        current_capital = round(self.state.initial_capital - reserved + total_pnl, 2)
+        win_rate = round(len(wins)/len(closed)*100, 1) if closed else 0.0
+
+        # Formato compatible con el dashboard
+        dashboard = {
+            "bot": "binance",
+            "initial_capital": self.state.initial_capital,
+            "current_capital": current_capital,
+            "total_pnl": total_pnl,
+            "total_pnl_raw": total_pnl,
+            "total_pnl_pct": round(total_pnl / self.state.initial_capital * 100, 2),
+            "win_rate": win_rate,
+            "max_drawdown": self.state.max_drawdown,
+            "open_trades": [asdict(t) for t in open_trades],
+            "positions": {t.id: asdict(t) for t in open_trades},
+            "closed_trades": [asdict(t) for t in closed[-30:]],
+            "all_closed_trades": [asdict(t) for t in closed],
+            "total_trades": len(closed),
+            "btc_price": self.state.btc_price,
+            "rsi": self.state.rsi,
+            "trend": self.state.trend,
+            "macd_cross": self.state.macd_cross,
+            "funding_rate": self.state.funding_rate,
+            "vol_ratio": self.state.vol_ratio,
+            "cycle_log": self.state.cycle_log or [],
+            "last_updated": datetime.now().isoformat(),
+        }
+
+        # Merge con disco — respetar cierres manuales del dashboard
+        try:
+            if self.state_file.exists():
+                disk = json.loads(self.state_file.read_text())
+                disk_closed = disk.get("all_closed_trades", disk.get("closed_trades", []))
+                bot_closed = dashboard["all_closed_trades"]
+                if len(disk_closed) > len(bot_closed):
+                    dashboard["all_closed_trades"] = disk_closed
+                    dashboard["closed_trades"] = disk_closed[-30:]
+                    dashboard["total_pnl"] = round(sum(t.get("pnl", 0) for t in disk_closed), 2)
+                    dashboard["total_pnl_raw"] = dashboard["total_pnl"]
+                    dashboard["total_pnl_pct"] = round(dashboard["total_pnl"] / self.state.initial_capital * 100, 2)
+                    d_wins = [t for t in disk_closed if t.get("pnl", 0) > 0]
+                    dashboard["win_rate"] = round(len(d_wins) / len(disk_closed) * 100, 1) if disk_closed else 0
+                    dashboard["total_trades"] = len(disk_closed)
+                    # Filtrar open_trades/positions para excluir trades cerrados manualmente
+                    closed_ids = {t.get("id") for t in disk_closed if t.get("id")}
+                    dashboard["open_trades"] = [t for t in dashboard["open_trades"] if t.get("id") not in closed_ids]
+                    dashboard["positions"] = {k: v for k, v in dashboard["positions"].items()
+                                              if k not in closed_ids and v.get("id") not in closed_ids}
+                    # Sincronizar en memoria para el próximo ciclo
+                    self.state.open_trades = [t for t in self.state.open_trades if t.id not in closed_ids]
+                # Cooldowns
+                dashboard["cooldowns"] = {**disk.get("cooldowns", {}), **dashboard.get("cooldowns", {})}
+        except Exception:
+            pass
+
+        self.state_file.write_text(json.dumps(dashboard, indent=2, default=str))
 
     def add_log(self, msg: str):
         entry = {"time": datetime.now().strftime("%H:%M:%S"), "msg": msg}
@@ -220,6 +296,20 @@ class PaperTradingEngine:
         self.add_log(msg)
         log.info(f"  [PAPER] {msg}")
 
+        # Cooldown de 10 minutos después de stop loss para evitar re-entradas inmediatas
+        if reason == "STOP_LOSS":
+            import json as _json
+            from pathlib import Path as _Path
+            from datetime import timedelta as _td
+            state_file = _Path(__file__).parent / "paper_trading" / "binance_state.json"
+            try:
+                raw = _json.loads(state_file.read_text()) if state_file.exists() else {}
+                raw["cooldown_until"] = (datetime.now() + _td(minutes=10)).isoformat()
+                state_file.write_text(_json.dumps(raw, indent=2))
+                log.info(f"  ⏸ Cooldown 10min activado tras STOP_LOSS")
+            except Exception as e:
+                log.warning(f"Error escribiendo cooldown: {e}")
+
     def close_binance_position(self, current_price: float, reason: str = "SIGNAL"):
         """Cierra todas las posiciones abiertas de Binance."""
         for trade in list(self.state.open_trades):
@@ -234,71 +324,6 @@ class PaperTradingEngine:
             if t.bot == "binance":
                 return t
         return None
-
-    # ─── Polymarket Operations ────────────────────────────────────────────────
-
-    def open_polymarket_trade(self, signal) -> Optional[Trade]:
-        """Registra apuesta simulada de Polymarket."""
-        size = min(signal.edge * 50, 15.0)  # sizing basado en edge, máx $15
-        size = max(size, 2.0)
-
-        trade = Trade(
-            id=f"pm_{int(time.time())}",
-            bot="polymarket",
-            side=signal.side,
-            entry_price=signal.price,
-            entry_time=datetime.now().isoformat(),
-            size=round(size, 2),
-            stop_loss=0.0,
-            take_profit=1.0 if signal.side in ("YES", "LONG") else 0.0,
-            reasoning=signal.reasoning,
-            confidence=signal.confidence,
-            market_question=signal.market.question,
-            market_probability=signal.market_probability,
-            ai_probability=signal.ai_probability,
-            edge=signal.edge,
-        )
-
-        self.state.open_trades.append(trade)
-        self.state.current_capital -= size
-        self.state.trades_today += 1
-        self.save()
-
-        msg = f"✓ PAPER {signal.side} | {signal.market.question[:50]}... | edge {signal.edge:+.1%} | ${size:.2f}"
-        self.add_log(msg)
-        log.info(f"  [PAPER] {msg}")
-        return trade
-
-    def resolve_polymarket_trade(self, trade_id: str, resolved_outcome: str, final_price: float):
-        """Resuelve un mercado de Polymarket con el resultado real."""
-        for trade in self.state.open_trades:
-            if trade.id == trade_id and trade.bot == "polymarket":
-                won = (trade.side == "YES" and resolved_outcome == "YES") or \
-                      (trade.side == "NO" and resolved_outcome == "NO")
-
-                pnl = trade.size * (1 / trade.entry_price - 1) if won else -trade.size
-                pnl = round(pnl, 2)
-
-                trade.exit_price = final_price
-                trade.exit_time = datetime.now().isoformat()
-                trade.exit_reason = "RESOLVED"
-                trade.pnl = pnl
-                trade.pnl_pct = round(pnl / trade.size * 100, 1)
-                trade.status = "CLOSED"
-
-                self.state.current_capital += trade.size + pnl
-                self.state.total_pnl += pnl
-                self.state.closed_trades.append(trade)
-                self.state.open_trades.remove(trade)
-
-                self._recalc_stats()
-                self.save()
-
-                emoji = "✅" if won else "❌"
-                msg = f"{emoji} RESUELTO {resolved_outcome} | {trade.market_question[:40]}... | P&L ${pnl:+.2f}"
-                self.add_log(msg)
-                log.info(f"  [PAPER] {msg}")
-                break
 
     def _recalc_stats(self):
         closed = [t for t in self.state.closed_trades if t.pnl is not None]
@@ -325,5 +350,247 @@ class PaperTradingEngine:
 def get_binance_engine(initial_capital: float = 500.0) -> PaperTradingEngine:
     return PaperTradingEngine("binance", initial_capital, BINANCE_STATE)
 
-def get_polymarket_engine(initial_capital: float = 300.0) -> PaperTradingEngine:
-    return PaperTradingEngine("polymarket", initial_capital, POLYMARKET_STATE)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Trading2 Engine
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class Trading2Engine(PaperTradingEngine):
+    """
+    Paper trading engine para Trading2 (MACD + RSI+VWAP + CVD).
+    Hereda toda la lógica de PaperTradingEngine y sobreescribe:
+      - save()          → escribe trading2_state.json con campos extra
+      - _load_or_create → carga los campos extra de Trading2
+      - open_t2_trade   → abre un trade con metadata de estrategia y voto
+      - check_t2_stops  → verifica SL/TP de posiciones Trading2
+      - close_t2_position → cierra posición abierta
+      - get_t2_position → retorna posición abierta si existe
+      - update_vote     → guarda el último voto de las 3 estrategias
+    """
+
+    def _load_or_create(self, initial_capital: float) -> BotState:
+        if self.state_file.exists():
+            try:
+                data = json.loads(self.state_file.read_text())
+                state = BotState(
+                    bot=self.bot,
+                    initial_capital=data.get("initial_capital", initial_capital),
+                    current_capital=data.get("current_capital", initial_capital),
+                    peak_capital=data.get("current_capital", initial_capital),
+                    total_pnl=data.get("total_pnl", 0.0),
+                    total_pnl_pct=data.get("total_pnl_pct", 0.0),
+                    win_rate=data.get("win_rate", 0.0),
+                    max_drawdown=data.get("max_drawdown", 0.0),
+                    cycle_log=data.get("cycle_log", []),
+                    btc_price=data.get("btc_price", 0.0),
+                    active_strategy=data.get("active_strategy", "VOTE"),
+                    last_vote=data.get("last_vote", {}),
+                )
+                all_closed = data.get("all_closed_trades", data.get("closed_trades", []))
+                state.open_trades   = [Trade(**{k: v for k, v in t.items() if k in Trade.__dataclass_fields__}) for t in data.get("open_trades", [])]
+                state.closed_trades = [Trade(**{k: v for k, v in t.items() if k in Trade.__dataclass_fields__}) for t in all_closed]
+                log.info(f"[trading2] Estado cargado: ${state.current_capital:.2f} | {len(state.open_trades)} abiertos | {len(state.closed_trades)} cerrados")
+                return state
+            except Exception as e:
+                log.warning(f"[trading2] Error cargando estado: {e} — creando nuevo")
+
+        return BotState(
+            bot=self.bot,
+            initial_capital=initial_capital,
+            current_capital=initial_capital,
+            peak_capital=initial_capital,
+        )
+
+    def save(self):
+        closed     = [t for t in self.state.closed_trades if t.pnl is not None]
+        wins       = [t for t in closed if t.pnl > 0]
+        open_trades = self.state.open_trades
+
+        total_pnl       = round(sum(t.pnl for t in closed), 2)
+        reserved        = sum(t.size for t in open_trades)
+        current_capital = round(self.state.initial_capital - reserved + total_pnl, 2)
+        win_rate        = round(len(wins) / len(closed) * 100, 1) if closed else 0.0
+
+        dashboard = {
+            "bot":             "trading2",
+            "initial_capital": self.state.initial_capital,
+            "current_capital": current_capital,
+            "total_pnl":       total_pnl,
+            "total_pnl_raw":   total_pnl,
+            "total_pnl_pct":   round(total_pnl / self.state.initial_capital * 100, 2),
+            "win_rate":        win_rate,
+            "max_drawdown":    self.state.max_drawdown,
+            "open_trades":     [asdict(t) for t in open_trades],
+            "positions":       {t.id: asdict(t) for t in open_trades},
+            "closed_trades":   [asdict(t) for t in closed[-30:]],
+            "all_closed_trades": [asdict(t) for t in closed],
+            "total_trades":    len(closed),
+            "btc_price":       self.state.btc_price,
+            "active_strategy": self.state.active_strategy,
+            "last_vote":       self.state.last_vote,
+            "cycle_log":       self.state.cycle_log or [],
+            "last_updated":    datetime.now().isoformat(),
+        }
+
+        # Merge con disco — respetar cierres manuales del dashboard
+        try:
+            if self.state_file.exists():
+                disk = json.loads(self.state_file.read_text())
+                disk_closed = disk.get("all_closed_trades", disk.get("closed_trades", []))
+                bot_closed  = dashboard["all_closed_trades"]
+                if len(disk_closed) > len(bot_closed):
+                    dashboard["all_closed_trades"] = disk_closed
+                    dashboard["closed_trades"]      = disk_closed[-30:]
+                    dashboard["total_pnl"]          = round(sum(t.get("pnl", 0) for t in disk_closed), 2)
+                    dashboard["total_pnl_raw"]      = dashboard["total_pnl"]
+                    dashboard["total_pnl_pct"]      = round(dashboard["total_pnl"] / self.state.initial_capital * 100, 2)
+                    d_wins = [t for t in disk_closed if t.get("pnl", 0) > 0]
+                    dashboard["win_rate"]    = round(len(d_wins) / len(disk_closed) * 100, 1) if disk_closed else 0
+                    dashboard["total_trades"] = len(disk_closed)
+                    closed_ids = {t.get("id") for t in disk_closed if t.get("id")}
+                    dashboard["open_trades"] = [t for t in dashboard["open_trades"] if t.get("id") not in closed_ids]
+                    dashboard["positions"]   = {k: v for k, v in dashboard["positions"].items()
+                                                if k not in closed_ids and v.get("id") not in closed_ids}
+                    self.state.open_trades = [t for t in self.state.open_trades if t.id not in closed_ids]
+                dashboard["cooldowns"] = {**disk.get("cooldowns", {}), **dashboard.get("cooldowns", {})}
+        except Exception:
+            pass
+
+        self.state_file.write_text(json.dumps(dashboard, indent=2, default=str))
+
+    # ── Trading2-specific helpers ──────────────────────────────────────────────
+
+    def update_vote(self, macd: str, rsi_vwap: str, cvd: str, result: str):
+        """Guarda el resultado del último ciclo de votación."""
+        self.state.last_vote = {"macd": macd, "rsi_vwap": rsi_vwap, "cvd": cvd, "result": result}
+
+    def open_t2_trade(self, decision: dict, current_price: float, capital: float, leverage: int) -> Optional[Trade]:
+        """Abre un trade simulado de Trading2 con metadata de estrategia."""
+        side    = decision["decision"]
+        pos_pct = min(float(decision.get("position_size_pct", 0.06)), 0.10)
+        sl_pct  = float(decision.get("stop_loss_pct", 0.02))
+        tp_pct  = float(decision.get("take_profit_pct", 0.05))
+        size    = round(capital * pos_pct, 2)
+
+        if side == "LONG":
+            sl = round(current_price * (1 - sl_pct), 2)
+            tp = round(current_price * (1 + tp_pct), 2)
+        else:
+            sl = round(current_price * (1 + sl_pct), 2)
+            tp = round(current_price * (1 - tp_pct), 2)
+
+        trade = Trade(
+            id=f"t2_{int(time.time())}",
+            bot="trading2",
+            side=side,
+            entry_price=current_price,
+            entry_time=datetime.now().isoformat(),
+            size=size,
+            stop_loss=sl,
+            take_profit=tp,
+            reasoning=decision.get("reasoning", ""),
+            confidence=decision.get("confidence", ""),
+            leverage=leverage,
+        )
+        # Guardar qué estrategia lo abrió (campo extra, no rompe dataclass)
+        trade.__dict__["_strategy"] = decision.get("_strategy", self.state.active_strategy)
+
+        self.state.open_trades.append(trade)
+        self.state.current_capital -= size
+        self.state.trades_today    += 1
+        self.save()
+
+        msg = f"✓ T2 {side} [{decision.get('_strategy','?')}] | ${current_price:,.0f} | SL ${sl:,.0f} | TP ${tp:,.0f} | ${size:.0f}"
+        self.add_log(msg)
+        log.info(f"  [T2 PAPER] {msg}")
+        return trade
+
+    def check_t2_stops(self, current_price: float):
+        """Verifica SL/TP de posiciones Trading2."""
+        closed = []
+        for trade in self.state.open_trades:
+            if trade.bot != "trading2":
+                continue
+            hit_sl = hit_tp = False
+            if trade.side == "LONG":
+                hit_sl = current_price <= trade.stop_loss
+                hit_tp = current_price >= trade.take_profit
+            else:
+                hit_sl = current_price >= trade.stop_loss
+                hit_tp = current_price <= trade.take_profit
+
+            if hit_sl or hit_tp:
+                exit_price = trade.stop_loss if hit_sl else trade.take_profit
+                reason     = "STOP_LOSS" if hit_sl else "TAKE_PROFIT"
+                self._close_t2_trade(trade, exit_price, reason)
+                closed.append(trade)
+
+        for t in closed:
+            self.state.open_trades.remove(t)
+        if closed:
+            self.save()
+
+    def _close_t2_trade(self, trade: Trade, exit_price: float, reason: str):
+        """Cierra un trade Trading2 y calcula P&L."""
+        if trade.side == "LONG":
+            raw_pnl = (exit_price - trade.entry_price) / trade.entry_price
+        else:
+            raw_pnl = (trade.entry_price - exit_price) / trade.entry_price
+
+        pnl     = round(raw_pnl * trade.size * trade.leverage, 2)
+        pnl_pct = round(raw_pnl * trade.leverage * 100, 2)
+
+        trade.exit_price  = exit_price
+        trade.exit_time   = datetime.now().isoformat()
+        trade.exit_reason = reason
+        trade.pnl         = pnl
+        trade.pnl_pct     = pnl_pct
+        trade.status      = "CLOSED"
+
+        self.state.current_capital += trade.size + pnl
+        self.state.total_pnl       += pnl
+        self.state.total_pnl_pct    = round((self.state.current_capital - self.state.initial_capital) / self.state.initial_capital * 100, 2)
+        self.state.closed_trades.append(trade)
+
+        if self.state.current_capital > self.state.peak_capital:
+            self.state.peak_capital = self.state.current_capital
+        dd = (self.state.peak_capital - self.state.current_capital) / self.state.peak_capital * 100
+        self.state.max_drawdown = max(self.state.max_drawdown, dd)
+
+        closed = [t for t in self.state.closed_trades if t.pnl is not None]
+        wins   = [t for t in closed if t.pnl > 0]
+        self.state.win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0.0
+
+        emoji = "✅" if pnl > 0 else "❌"
+        msg   = f"{emoji} T2 CERRADO {reason} | ${exit_price:,.0f} | P&L {'+' if pnl >= 0 else ''}{pnl:.2f} ({pnl_pct:+.1f}%)"
+        self.add_log(msg)
+        log.info(f"  [T2 PAPER] {msg}")
+
+        if reason == "STOP_LOSS":
+            try:
+                raw = json.loads(self.state_file.read_text()) if self.state_file.exists() else {}
+                from datetime import timedelta
+                raw["cooldown_until"] = (datetime.now() + timedelta(minutes=10)).isoformat()
+                self.state_file.write_text(json.dumps(raw, indent=2))
+                log.info("  ⏸ Cooldown 10min activado tras STOP_LOSS")
+            except Exception as e:
+                log.warning(f"Error escribiendo cooldown: {e}")
+
+    def close_t2_position(self, current_price: float, reason: str = "SIGNAL"):
+        """Cierra todas las posiciones abiertas de Trading2."""
+        for trade in list(self.state.open_trades):
+            if trade.bot == "trading2":
+                self._close_t2_trade(trade, current_price, reason)
+                self.state.open_trades.remove(trade)
+        self.save()
+
+    def get_t2_position(self) -> Optional[Trade]:
+        """Retorna la posición abierta de Trading2 si existe."""
+        for t in self.state.open_trades:
+            if t.bot == "trading2":
+                return t
+        return None
+
+
+def get_trading2_engine(initial_capital: float = 500.0) -> Trading2Engine:
+    return Trading2Engine("trading2", initial_capital, TRADING2_STATE)

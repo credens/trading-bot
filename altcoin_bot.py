@@ -35,10 +35,9 @@ LEVERAGE = int(os.getenv("ALTCOIN_LEVERAGE", "3"))
 MAX_POSITIONS = int(os.getenv("ALTCOIN_MAX_POSITIONS", "5"))
 TOTAL_CAPITAL = float(os.getenv("ALTCOIN_CAPITAL", "500"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
-INTERVAL_MINUTES = int(os.getenv("ALTCOIN_INTERVAL", "15"))
+INTERVAL_MINUTES = int(os.getenv("ALTCOIN_INTERVAL", "3"))
 MIN_VOLUME_USDT = float(os.getenv("ALTCOIN_MIN_VOLUME", "50000000"))  # $50M diarios
 
-ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 
@@ -50,8 +49,8 @@ STATE_FILE = DATA_DIR / "state.json"
 EXCLUDE = {"BUSDUSDT", "USDCUSDT", "TUSDUSDT", "USDTUSDT", "BTCUSDT",
            "BTCDOMUSDT", "DEFIUSDT", "BNXUSDT", "1000SHIBUSDT"}
 
-import anthropic as anthropic_lib
-ai_client = anthropic_lib.Anthropic(api_key=ANTHROPIC_KEY) if ANTHROPIC_KEY else None
+from ai_client import call_ai, parse_json_response, is_available, get_model_info
+log.info(f"AI Engine: {get_model_info()}")
 
 # ─── Binance Client ───────────────────────────────────────────────────────────
 
@@ -158,6 +157,10 @@ def get_indicators(client, symbol: str) -> Optional[dict]:
         except Exception:
             funding_rate = 0
 
+        # Verificar NaN antes de retornar
+        if any(v != v for v in [rsi, bb_pct, vol_ratio, atr_pct]):  # NaN check
+            return None
+
         return {
             "symbol": symbol,
             "price": float(close.iloc[-1]),
@@ -198,11 +201,37 @@ Funding rate: {funding_rate:+.4f}%
 Cambio 24h: {change_24h:+.1f}%
 Volumen 24h: ${volume_24h_m:.0f}M
 
-ESTRATEGIAS DISPONIBLES:
-- MEAN_REVERSION: RSI extremo (<30 o >70), esperar rebote. Mejor en alta volatilidad.
-- MOMENTUM: MACD bullish/bearish + volumen alto. Seguir tendencia fuerte.
-- RANGE: BB%B en extremos, mercado lateral. Comprar lower band, vender upper band.
-- SKIP: No hay oportunidad clara ahora.
+REGLAS DE DIRECCIÓN — CRÍTICO:
+1. MOMENTUM bullish (MACD+, vol alto, trend bullish) → LONG
+2. MOMENTUM bearish (MACD-, vol alto, trend bearish) → SHORT  
+3. MEAN_REVERSION: RSI<25 → LONG | RSI>75 → SHORT (independiente de tendencia)
+4. RANGE: BB%B<0.1 → LONG | BB%B>0.9 → SHORT
+5. Cambio 24h negativo grande (<-3%) + RSI bajo → LONG (rebote)
+6. Cambio 24h positivo grande (>+5%) + RSI alto → SHORT (corrección)
+7. NO tenés sesgo alcista. SHORT es igual de válido que LONG.
+8. Si ya hay {open_positions} LONGs abiertos → priorizar SHORT si hay señal
+
+SEÑALES PARA SHORT (buscalas activamente):
+- RSI > 70 → sobrecomprado, SHORT
+- BB%B > 0.85 → precio en banda superior, SHORT
+- MACD bearish cross (histograma cruzó a negativo) → SHORT
+- Cambio 24h > +8% → posible corrección, SHORT
+- funding_rate > 0.02% → longs pagando, favorece SHORT
+
+SEÑALES PARA LONG:
+- RSI < 30 → sobrevendido, LONG
+- BB%B < 0.15 → precio en banda inferior, LONG  
+- MACD bullish cross (histograma cruzó a positivo) → LONG
+- Cambio 24h < -8% → posible rebote, LONG
+
+ESTRATEGIAS:
+- MEAN_REVERSION: RSI extremo (<30=LONG, >70=SHORT) sin importar tendencia
+- MOMENTUM: seguir MACD cross con volumen alto
+- RANGE: BB%B extremos (<0.1=LONG, >0.9=SHORT)
+- SKIP: sin señales claras
+
+BALANCE OBLIGATORIO: Si {open_long_count} posiciones son LONG y {open_short_count} son SHORT,
+priorizar la dirección con menos posiciones para diversificar riesgo.
 
 Capital disponible: ${capital:.2f} USDT | Leverage: {leverage}x | Posiciones abiertas: {open_positions}/{max_positions}
 
@@ -211,89 +240,118 @@ Respondé ÚNICAMENTE con JSON válido:
   "strategy": "MEAN_REVERSION|MOMENTUM|RANGE|SKIP",
   "direction": "LONG|SHORT|SKIP",
   "confidence": "HIGH|MEDIUM|LOW",
-  "reasoning": "1-2 oraciones explicando por qué esta estrategia para esta coin",
-  "stop_loss_pct": 0.02,
-  "take_profit_pct": 0.04,
+  "reasoning": "1-2 oraciones. Mencioná explícitamente la tendencia y por qué SHORT o LONG",
+  "stop_loss_pct": 0.03,
+  "take_profit_pct": 0.07,
   "position_size_usdt": 50,
   "key_levels": {{"entry": {price:.6f}, "sl": 0.0, "tp": 0.0}}
 }}
 
-position_size_usdt: cuánto USDT usar (máx {max_position_usdt:.0f} según oportunidad)
-Si confidence es LOW, usá position_size_usdt pequeño o SKIP."""
-
-
-def analyze_altcoin(indicators: dict, market_data: dict, capital: float, open_positions: int) -> Optional[dict]:
-    """Claude analiza la altcoin y elige estrategia."""
-    if not ai_client:
-        return None
-
-    max_position = min(capital * 0.20, TOTAL_CAPITAL / MAX_POSITIONS)
-
-    prompt = ADAPTIVE_PROMPT.format(
-        **indicators,
-        change_24h=market_data.get("change_24h", 0),
-        volume_24h_m=market_data.get("volume_24h", 0) / 1e6,
-        capital=capital,
-        leverage=LEVERAGE,
-        open_positions=open_positions,
-        max_positions=MAX_POSITIONS,
-        max_position_usdt=max_position,
-    )
-
-    try:
-        response = ai_client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=400,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        raw = response.content[0].text.strip()
-        if "```" in raw:
-            raw = raw.split("```")[1]
-            if raw.startswith("json"):
-                raw = raw[4:]
-        return json.loads(raw.strip())
-
-    except Exception as e:
-        log.warning(f"Error analizando {indicators.get('symbol')}: {e}")
-        return None
-
+IMPORTANTE: SHORT es tan válido como LONG. En mercado bearish SIEMPRE SHORT.
+position_size_usdt: máx {max_position_usdt:.0f} USDT.
+Si confidence LOW → SKIP obligatorio."""
 
 # ─── Paper Trading State ──────────────────────────────────────────────────────
 
 def load_state() -> dict:
-    if STATE_FILE.exists():
-        try:
-            return json.loads(STATE_FILE.read_text())
-        except Exception:
-            pass
-    return {
+    default = {
         "capital": TOTAL_CAPITAL,
         "positions": {},
         "closed_trades": [],
         "total_pnl": 0.0,
         "cycle_log": [],
+        "last_scan": [],
+        "scanning": False,
+        "cooldowns": {},
+        "manual_close": [],
     }
+    if STATE_FILE.exists():
+        try:
+            data = json.loads(STATE_FILE.read_text())
+            state = dict(default)
+            state["capital"] = data.get("capital", data.get("current_capital", TOTAL_CAPITAL))
+            state["total_pnl"] = sum((t.get("pnl") or 0) for t in data.get("all_closed_trades", data.get("closed_trades", [])))
+            positions = data.get("positions", {})
+            if isinstance(positions, list):
+                positions = {}
+            state["positions"] = positions
+            all_closed = data.get("all_closed_trades", data.get("closed_trades", []))
+            state["closed_trades"] = all_closed
+            state["cycle_log"] = data.get("cycle_log", [])
+            state["last_scan"] = data.get("last_scan", [])
+            state["scanning"] = data.get("scanning", False)
+            state["cooldowns"] = data.get("cooldowns", {})
+            state["manual_close"] = data.get("manual_close", [])
+            log.info(f"Estado cargado: ${state['capital']:.2f} capital | {len(state['positions'])} posiciones | {len(state['closed_trades'])} trades cerrados | {len(state['cooldowns'])} cooldowns")
+            return state
+        except Exception as e:
+            log.warning(f"Error cargando estado: {e} — iniciando fresh")
+    return default
 
 
 def save_state(state: dict):
     closed = state.get("closed_trades", [])
+    state["total_pnl"] = round(sum((t.get("pnl") or 0) for t in closed), 2)
+    state["capital"] = round(TOTAL_CAPITAL - sum(p.get("size_usdt", 0) for p in state.get("positions", {}).values()) + state["total_pnl"], 2)
     wins = [t for t in closed if t.get("pnl", 0) > 0]
     dashboard = {
         "bot": "altcoins",
         "initial_capital": TOTAL_CAPITAL,
         "current_capital": round(state["capital"], 2),
         "total_pnl": round(state["total_pnl"], 2),
-        "total_pnl_pct": round((state["capital"] - TOTAL_CAPITAL) / TOTAL_CAPITAL * 100, 2),
+        "total_pnl_raw": round(state["total_pnl"], 2),
+        "total_pnl_pct": round(state["total_pnl"] / TOTAL_CAPITAL * 100, 2),
         "win_rate": round(len(wins) / len(closed) * 100, 1) if closed else 0,
         "open_positions": list(state["positions"].values()),
+        "positions": state["positions"],
         "closed_trades": closed[-30:],
+        "all_closed_trades": state.get("closed_trades", []),
         "total_trades": len(closed),
+        "capital": round(state["capital"], 2),
+        "total_pnl_raw": round(state["total_pnl"], 2),
         "cycle_log": state.get("cycle_log", [])[-50:],
-        "last_scan": state.get("last_scan", []),       # análisis en vivo
-        "scanning": state.get("scanning", False),       # si está escaneando ahora
+        "last_scan": state.get("last_scan", []),
+        "scanning": state.get("scanning", False),
+        "cooldowns": state.get("cooldowns", {}),
+        "manual_close": state.get("manual_close", []),
         "last_updated": datetime.now().isoformat(),
     }
-    STATE_FILE.write_text(json.dumps(dashboard, indent=2, default=str))
+    def clean_nan(obj):
+        if isinstance(obj, float) and (obj != obj):
+            return None
+        if isinstance(obj, dict):
+            return {k: clean_nan(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [clean_nan(v) for v in obj]
+        return obj
+    try:
+        if STATE_FILE.exists():
+            disk = json.loads(STATE_FILE.read_text())
+            disk_closed = disk.get("all_closed_trades", disk.get("closed_trades", []))
+            bot_closed = dashboard["all_closed_trades"]
+            if len(disk_closed) > len(bot_closed):
+                dashboard["all_closed_trades"] = disk_closed
+                dashboard["closed_trades"] = disk_closed[-30:]
+                dashboard["total_pnl"] = round(sum(t.get("pnl",0) for t in disk_closed), 2)
+                dashboard["total_pnl_raw"] = dashboard["total_pnl"]
+                dashboard["total_pnl_pct"] = round(dashboard["total_pnl"]/TOTAL_CAPITAL*100, 2)
+                d_wins = [t for t in disk_closed if t.get("pnl",0)>0]
+                dashboard["win_rate"] = round(len(d_wins)/len(disk_closed)*100,1) if disk_closed else 0
+                dashboard["total_trades"] = len(disk_closed)
+            dashboard["cooldowns"] = {**disk.get("cooldowns",{}), **dashboard.get("cooldowns",{})}
+            current_cooldowns = dashboard.get("cooldowns", {})
+            disk_positions = disk.get("positions", {})
+            bot_positions = dashboard.get("positions", {})
+            disk_positions_valid = {k: v for k, v in disk_positions.items() if k not in current_cooldowns}
+            if disk_positions_valid and not bot_positions:
+                dashboard["positions"] = disk_positions_valid
+                dashboard["open_positions"] = list(disk_positions_valid.values())
+    except Exception as e:
+        log.warning(f"Error en merge de estado: {e}")
+    import os as _os
+    tmp = STATE_FILE.parent / f".state_tmp_{_os.getpid()}.json"
+    tmp.write_text(json.dumps(clean_nan(dashboard), indent=2, default=str))
+    _os.replace(tmp, STATE_FILE)
 
 
 def add_log(state: dict, msg: str):
@@ -302,14 +360,159 @@ def add_log(state: dict, msg: str):
     state["cycle_log"] = logs
 
 
-# ─── Order Execution ──────────────────────────────────────────────────────────
+
+def analyze_altcoin(indicators: dict, market_data: dict, capital: float, open_positions: int, open_longs: int = 0, open_shorts: int = 0) -> Optional[dict]:
+    """
+    Análisis híbrido: scoring técnico filtra primero, Claude decide en los mejores candidatos.
+    """
+    from ai_client import call_ai, parse_json_response, is_available
+
+    rsi = indicators.get("rsi", 50)
+    bb_pct = indicators.get("bb_pct", 0.5)
+    macd_hist = indicators.get("macd_hist", 0)
+    macd_cross = indicators.get("macd_cross", "neutral")
+    vol_ratio = indicators.get("vol_ratio", 1)
+    atr_pct = indicators.get("atr_pct", 1)
+    trend = indicators.get("trend", "neutral")
+    funding = indicators.get("funding_rate", 0)
+    change_24h = market_data.get("change_24h", 0)
+    price = indicators.get("price", 0)
+    symbol = indicators.get("symbol", "")
+
+    # Datos inválidos
+    if atr_pct < 0.1 or rsi != rsi or bb_pct != bb_pct:
+        return None
+
+    # ── Paso 1: Scoring técnico rápido ──────────────────────────────────────
+    score = 0
+    signals = []
+
+    if rsi < 25: score += 3; signals.append(f"RSI sobrevendido ({rsi:.0f})")
+    elif rsi < 35: score += 2; signals.append(f"RSI bajo ({rsi:.0f})")
+    elif rsi > 75: score -= 3; signals.append(f"RSI sobrecomprado ({rsi:.0f})")
+    elif rsi > 65: score -= 2; signals.append(f"RSI alto ({rsi:.0f})")
+
+    if bb_pct < 0.1: score += 3; signals.append("BB lower band")
+    elif bb_pct < 0.2: score += 1; signals.append("BB cerca lower")
+    elif bb_pct > 0.9: score -= 3; signals.append("BB upper band")
+    elif bb_pct > 0.8: score -= 1; signals.append("BB cerca upper")
+
+    if macd_cross == "bullish": score += 2; signals.append("MACD bullish cross")
+    elif macd_cross == "bearish": score -= 2; signals.append("MACD bearish cross")
+    elif macd_hist > 0: score += 1
+    elif macd_hist < 0: score -= 1
+
+    if trend == "bullish": score += 1
+    elif trend == "bearish": score -= 1
+
+    if vol_ratio > 2:
+        score = int(score * 1.5)
+        signals.append(f"Vol alto ({vol_ratio:.1f}x)")
+
+    if funding > 0.03: score -= 2; signals.append(f"Funding alto")
+    elif funding < -0.03: score += 2; signals.append("Funding negativo")
+
+    if change_24h > 10: score -= 2; signals.append(f"Sobreextendido +{change_24h:.1f}%")
+    elif change_24h < -10: score += 2; signals.append(f"Caída extrema {change_24h:.1f}%")
+
+    if open_longs > open_shorts + 2: score -= 1
+    elif open_shorts > open_longs + 2: score += 1
+
+    # Filtro: solo pasar a Claude si hay señal mínima
+    if abs(score) < 1:
+        return None
+
+    technical_direction = "LONG" if score > 0 else "SHORT"
+    log.info(f"    Score técnico: {score:+d} → {technical_direction} | {' | '.join(signals[:3])}")
+
+    # ── Paso 2: Claude confirma o descarta ───────────────────────────────────
+    if not is_available():
+        # Fallback a scoring puro si Claude no está disponible
+        if abs(score) >= 3: confidence = "HIGH"
+        elif abs(score) >= 1: confidence = "MEDIUM"
+        else: return None
+        direction = technical_direction
+    else:
+        prompt = f"""Eres un trader experto en crypto futuros. Analizá esta altcoin y confirmá o descartá la señal técnica.
+
+ALTCOIN: {symbol}
+Precio: ${price:.6f}
+RSI(14): {rsi:.1f}
+MACD cross: {macd_cross} | Histograma: {macd_hist:.4f}
+Bollinger %B: {bb_pct:.2f}
+ATR volatilidad: {atr_pct:.2f}%
+Volumen relativo: {vol_ratio:.1f}x
+Tendencia EMA50/200: {trend}
+Funding rate: {funding:+.4f}%
+Cambio 24h: {change_24h:+.1f}%
+
+SEÑAL TÉCNICA: Score {score:+d} → sugiere {technical_direction}
+Señales: {', '.join(signals)}
+
+Posiciones abiertas: {open_longs} LONG / {open_shorts} SHORT
+
+Confirmá si la señal tiene sentido o descartála. Respondé SOLO JSON:
+{{
+  "direction": "{technical_direction}|SKIP",
+  "confidence": "HIGH|MEDIUM|LOW",
+  "reasoning": "1 oración breve",
+  "stop_loss_pct": 0.025,
+  "take_profit_pct": 0.06
+}}
+Solo SKIP si la señal es claramente incorrecta. Confiá en el score técnico."""
+
+        try:
+            raw = call_ai(prompt, max_tokens=200)
+            result = parse_json_response(raw)
+            direction = result.get("direction", technical_direction)
+            confidence = result.get("confidence", "MEDIUM")
+            if direction == "SKIP" or confidence == "LOW":
+                log.info(f"    Claude descartó la señal")
+                return None
+            reasoning = result.get("reasoning", f"Score {score:+d}")
+            sl_pct = float(result.get("stop_loss_pct", max(atr_pct * 1.5 / 100, 0.02)))
+            tp_pct = float(result.get("take_profit_pct", sl_pct * 2.5))
+            log.info(f"    Claude confirma: {direction} | {confidence} | {reasoning}")
+        except Exception as e:
+            log.warning(f"    Error Claude: {e} — usando scoring técnico")
+            direction = technical_direction
+            confidence = "MEDIUM" if abs(score) >= 2 else "LOW"
+            if confidence == "LOW": return None
+            sl_pct = round(max(atr_pct * 1.5 / 100, 0.02), 4)
+            tp_pct = round(sl_pct * 2.5, 4)
+            reasoning = f"Score {score:+d} | {' | '.join(signals[:2])}"
+
+    # Estrategia
+    if rsi < 30 or rsi > 70 or bb_pct < 0.15 or bb_pct > 0.85:
+        strategy = "MEAN_REVERSION"
+    elif macd_cross in ("bullish", "bearish") and vol_ratio > 1.5:
+        strategy = "MOMENTUM"
+    else:
+        strategy = "RANGE"
+
+    sl_pct = round(max(atr_pct * 1.5 / 100, 0.02), 4)
+    tp_pct = round(sl_pct * 2.5, 4)
+    max_position = min(capital * 0.20, TOTAL_CAPITAL / MAX_POSITIONS)
+    size = round(min(max_position * (1.0 if confidence == "HIGH" else 0.6), max_position), 2)
+
+    return {
+        "strategy": strategy,
+        "direction": direction,
+        "confidence": confidence,
+        "reasoning": reasoning if 'reasoning' in dir() else f"Score {score:+d}",
+        "stop_loss_pct": sl_pct,
+        "take_profit_pct": tp_pct,
+        "position_size_usdt": size,
+        "key_levels": {"entry": price, "sl": 0.0, "tp": 0.0}
+    }
+
 
 def open_position(client, state: dict, symbol: str, analysis: dict, indicators: dict):
     """Abre posición paper o real."""
     direction = analysis["direction"]
     size_usdt = float(analysis.get("position_size_usdt", 30))
-    sl_pct = float(analysis.get("stop_loss_pct", 0.02))
-    tp_pct = float(analysis.get("take_profit_pct", 0.04))
+    sl_pct = float(analysis.get("stop_loss_pct", 0.03))   # default 3%
+    tp_pct = float(analysis.get("take_profit_pct", 0.07))  # default 7% (R:R 2.3:1)
     price = indicators["price"]
 
     sl = round(price * (1 - sl_pct) if direction == "LONG" else price * (1 + sl_pct), 8)
@@ -416,6 +619,33 @@ def run_cycle(client):
 
     state = load_state()
 
+    # 0. Verificar cierres manuales solicitados desde dashboard
+    manual_closes = state.get("manual_close", [])
+    if manual_closes:
+        log.info(f"🛑 Cierres manuales solicitados: {manual_closes}")
+        for sym in list(manual_closes):
+            if sym in state["positions"]:
+                try:
+                    ticker = client.futures_ticker(symbol=sym)
+                    price = float(ticker["lastPrice"])
+                    pos = state["positions"][sym]
+                    direction = pos["direction"]
+                    entry = pos["entry_price"]
+                    pnl_pct = ((price-entry)/entry if direction=="LONG" else (entry-price)/entry) * pos.get("leverage",3)
+                    pnl = round(pos["size_usdt"] * pnl_pct, 2)
+                    trade = {**pos, "exit_price": price, "exit_time": datetime.now().isoformat(),
+                             "exit_reason": "MANUAL", "pnl": pnl, "pnl_pct": round(pnl_pct*100,2), "status":"CLOSED"}
+                    state["closed_trades"].append(trade)
+                    state["capital"] += pos["size_usdt"] + pnl
+                    state["total_pnl"] += pnl
+                    del state["positions"][sym]
+                    add_log(state, f"🛑 MANUAL CLOSE {sym} @ ${price:.4f} | P&L {'+' if pnl>=0 else ''}${pnl:.2f}")
+                    log.info(f"  ✅ {sym} cerrado manualmente")
+                except Exception as e:
+                    log.error(f"Error cerrando {sym}: {e}")
+        state["manual_close"] = []
+        save_state(state)
+
     # 1. Verificar posiciones abiertas
     if state["positions"]:
         log.info(f"Verificando {len(state['positions'])} posiciones abiertas...")
@@ -440,8 +670,27 @@ def run_cycle(client):
         save_state(state)
         return
 
-    # Filtrar las que ya tienen posición
-    candidates = [a for a in altcoins if a["symbol"] not in state["positions"]]
+    # Filtrar las que ya tienen posición o están en cooldown
+    now = datetime.now()
+    cooldowns = state.get("cooldowns", {})
+    # Limpiar cooldowns expirados (manejar timezones)
+    def parse_dt(s):
+        try:
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return dt.replace(tzinfo=None) if dt.tzinfo else dt
+        except Exception:
+            return datetime.min
+    cooldowns = {s: t for s, t in cooldowns.items() if parse_dt(t) > now}
+    state["cooldowns"] = cooldowns
+
+    candidates = [
+        a for a in altcoins
+        if a["symbol"] not in state["positions"]
+        and a["symbol"] not in cooldowns
+    ]
+    if len(candidates) < len(altcoins):
+        skipped = [s for s in cooldowns]
+        log.info(f"  En cooldown (cierre manual): {skipped}")
     log.info(f"\nAnalizando {min(len(candidates), slots*3)} candidatos con Claude...")
     state["scanning"] = True
     state["last_scan"] = []
@@ -462,7 +711,10 @@ def run_cycle(client):
         analyzed += 1
         log.info(f"  {symbol}: RSI={indicators['rsi']:.0f} | BB={indicators['bb_pct']:.2f} | Vol={indicators['vol_ratio']:.1f}x | HistVol={indicators['hist_vol']:.2f}%")
 
-        analysis = analyze_altcoin(indicators, coin, capital, open_count)
+        # Contar longs y shorts abiertos para pasar al prompt
+        open_longs = sum(1 for p in state["positions"].values() if p.get("direction") == "LONG")
+        open_shorts = sum(1 for p in state["positions"].values() if p.get("direction") == "SHORT")
+        analysis = analyze_altcoin(indicators, coin, capital, open_count, open_longs, open_shorts)
         if not analysis:
             continue
 
@@ -492,6 +744,13 @@ def run_cycle(client):
         if strategy == "SKIP" or direction == "SKIP" or confidence == "LOW":
             log.info(f"    → SKIP ({strategy}, {confidence})")
             continue
+
+        # Log de dirección vs tendencia (informativo, no bloquea)
+        trend = indicators.get("trend", "neutral")
+        if trend == "bullish" and direction == "SHORT":
+            log.info(f"    → SHORT contra tendencia bullish (mean reversion)")
+        elif trend == "bearish" and direction == "LONG":
+            log.info(f"    → LONG contra tendencia bearish (mean reversion)")
 
         log.info(f"    → {strategy} {direction} | {confidence} | {analysis.get('reasoning', '')[:60]}")
         opportunities.append((indicators, coin, analysis))
