@@ -52,6 +52,7 @@ CYCLE_SECONDS  = int(os.getenv("SCALP_CYCLE_SECONDS", "30"))
 SL_PCT         = 0.004   # 0.4% mínimo
 TP_PCT         = 0.008   # 0.8% mínimo
 POS_PCT        = 0.10    # 10% del capital por trade
+MIN_HOLD_SECS  = 180     # 3 min mínimo antes de cerrar por SIGNAL (evita whipsaw)
 
 BINANCE_API_KEY    = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
@@ -474,7 +475,11 @@ def run_cycle(client, paper):
 
     elif action == "FLAT":
         if open_trade:
-            paper.close_scalping_position(price, "SIGNAL")
+            held_secs = (datetime.now() - datetime.fromisoformat(open_trade.entry_time[:19])).total_seconds()
+            if held_secs < MIN_HOLD_SECS:
+                paper.add_log(f"Señal FLAT ignorada — hold mínimo ({held_secs:.0f}s/{MIN_HOLD_SECS}s)")
+            else:
+                paper.close_scalping_position(price, "SIGNAL")
         else:
             paper.add_log(f"FLAT — {decision['reasoning'][:60]}")
 
