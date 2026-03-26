@@ -660,10 +660,10 @@ def strategy_cvd_divergence(client, current_position: str, capital: float) -> di
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SISTEMA DE VOTACIÓN — necesita ≥2/3 para entrar
+# SISTEMA DE VOTACIÓN — necesita 3/3 (unanimidad) para entrar
 # ══════════════════════════════════════════════════════════════════════════════
 def run_strategies(client, current_position: str, capital: float) -> dict:
-    """Ejecuta las 3 estrategias y decide por votación (≥2/3)."""
+    """Ejecuta las 3 estrategias y decide por votación (3/3 unanimidad)."""
     r1 = strategy_macd_momentum(client, current_position, capital)
     r2 = strategy_rsi_vwap(client, current_position, capital)
     r3 = strategy_cvd_divergence(client, current_position, capital)
@@ -684,18 +684,16 @@ def run_strategies(client, current_position: str, capital: float) -> dict:
     for r in [r1, r2, r3]:
         all_signals.extend(r.get("key_signals", [])[:2])
 
-    if long_v >= 2:
-        conf = "HIGH" if long_v == 3 else "MEDIUM"
-        return {"decision": "LONG", "confidence": conf,
-                "reasoning": f"Voto {long_v}/3 LONG", "key_signals": all_signals,
+    if long_v == 3:
+        return {"decision": "LONG", "confidence": "HIGH",
+                "reasoning": f"Unanimidad 3/3 LONG", "key_signals": all_signals,
                 "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
-                "position_size_pct": 0.10 if conf == "HIGH" else 0.06}
-    if short_v >= 2:
-        conf = "HIGH" if short_v == 3 else "MEDIUM"
-        return {"decision": "SHORT", "confidence": conf,
-                "reasoning": f"Voto {short_v}/3 SHORT", "key_signals": all_signals,
+                "position_size_pct": 0.10}
+    if short_v == 3:
+        return {"decision": "SHORT", "confidence": "HIGH",
+                "reasoning": f"Unanimidad 3/3 SHORT", "key_signals": all_signals,
                 "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
-                "position_size_pct": 0.10 if conf == "HIGH" else 0.06}
+                "position_size_pct": 0.10}
     # Mayoría HOLD — mantener posición
     hold_rs = [r for r in [r1, r2, r3] if r["decision"] == "HOLD"]
     if len(hold_rs) >= 2:
@@ -912,18 +910,22 @@ def run_cycle(client, paper=None):
     action = decision.get("decision", "FLAT")
     confidence = decision.get("confidence", "LOW")
 
-    # ── MACRO OVERRIDE: veto dirección contraria al macro 1h ──────────────────
-    macro = indicators.get("macro_trend", "neutral")
-    if action == "LONG" and macro == "bearish":
-        log.warning(f"  🚫 LONG vetado — macro 1h BEARISH ({indicators.get('macro_bear',0)} señales bajistas)")
-        action = "FLAT"
-        decision["decision"] = "FLAT"
-        decision["reasoning"] = f"LONG vetado por macro bearish 1h"
-    elif action == "SHORT" and macro == "bullish":
-        log.warning(f"  🚫 SHORT vetado — macro 1h BULLISH ({indicators.get('macro_bull',0)} señales alcistas)")
-        action = "FLAT"
-        decision["decision"] = "FLAT"
-        decision["reasoning"] = f"SHORT vetado por macro bullish 1h"
+    # ── MACRO OVERRIDE DURO: veto absoluto por macro 1h ──────────────────────
+    # Regla: bearish → SOLO SHORT. bullish → SOLO LONG. neutral → FLAT.
+    macro_trend = indicators.get("macro_trend", "neutral")
+    if action in ("LONG", "SHORT"):
+        if macro_trend == "bearish" and action == "LONG":
+            log.warning(f"  🚫 LONG vetado — macro 1h BEARISH (HARD VETO)")
+            action = "FLAT"; decision["decision"] = "FLAT"
+            decision["reasoning"] = "LONG vetado: macro 1h BEARISH"
+        elif macro_trend == "bullish" and action == "SHORT":
+            log.warning(f"  🚫 SHORT vetado — macro 1h BULLISH (HARD VETO)")
+            action = "FLAT"; decision["decision"] = "FLAT"
+            decision["reasoning"] = "SHORT vetado: macro 1h BULLISH"
+        elif macro_trend == "neutral":
+            log.info(f"  ⏸️  Macro 1h NEUTRAL — no operar (esperando tendencia clara)")
+            action = "FLAT"; decision["decision"] = "FLAT"
+            decision["reasoning"] = "Macro 1h neutral — sin tendencia clara, esperando"
 
     log.info(f"Decisión: {action} | Confianza: {confidence}")
     log.info(f"  → {decision.get('reasoning', '')}")
@@ -932,6 +934,22 @@ def run_cycle(client, paper=None):
     if DRY_RUN and paper:
         # ── Paper Trading: ejecutar con datos reales, sin dinero real ──
         paper.check_binance_stops(indicators["price"])
+
+        # ── Trailing stop: mover SL a breakeven cuando el trade está +0.5% ──
+        _open = paper.get_binance_position()
+        if _open:
+            _price = indicators["price"]
+            _entry = _open.entry_price
+            _move = (_price - _entry) / _entry if _open.side == "LONG" else (_entry - _price) / _entry
+            if _move >= 0.005:  # +0.5% en precio = +5% P&L con 10x leverage
+                _be_sl = round(_entry * 1.0008, 1) if _open.side == "LONG" else round(_entry * 0.9992, 1)
+                if _open.side == "LONG" and _open.stop_loss < _be_sl:
+                    _open.stop_loss = _be_sl
+                    log.info(f"  📍 Trailing → SL a breakeven LONG ${_be_sl:,.1f} (trade +{_move*100:.2f}%)")
+                elif _open.side == "SHORT" and _open.stop_loss > _be_sl:
+                    _open.stop_loss = _be_sl
+                    log.info(f"  📍 Trailing → SL a breakeven SHORT ${_be_sl:,.1f} (trade +{_move*100:.2f}%)")
+
         paper.update_market_data(
             btc_price=indicators["price"],
             rsi=indicators["rsi"],

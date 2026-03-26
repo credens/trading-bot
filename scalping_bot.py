@@ -241,11 +241,6 @@ def analyze(ind: dict, current_position: str) -> dict:
             "take_profit_pct": tp_pct, "position_size_pct": POS_PCT,
         }
 
-    # ── Filtro horario: no operar 00:00–06:00 UTC ──────────────
-    utc_hour = datetime.now(timezone.utc).hour
-    if 0 <= utc_hour < 6:
-        return make("FLAT", "MEDIUM", f"Sin sesión activa ({utc_hour:02d}:xx UTC) — esperando", ["Horario bajo"])
-
     # ── Volatilidad extrema ────────────────────────────────────
     if atr_pct > 0.5:
         return make("FLAT", "MEDIUM", f"ATR alto ({atr_pct:.2f}%) — demasiado riesgo", ["Alta volatilidad"])
