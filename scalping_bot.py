@@ -304,20 +304,18 @@ def analyze(ind: dict, current_position: str) -> dict:
 
         log.info(f"  [TREND ADX:{ind['adx']:.0f}] L:{long_score} S:{short_score} | EMA:{ind['ema_trend']} RSI:{rsi:.0f} CVD:{'↑' if ind['cvd_bullish'] else '↓'} Vol:{vol:.1f}x")
 
-        if long_score >= 3 and long_score > short_score:
+        if long_score >= 2 and long_score > short_score:
+            # CVD diverge fuerte: reducir tamaño pero no bloquear
             if ind["cvd_divergence"] and not ind["cvd_bullish"]:
-                return make("FLAT", "MEDIUM", f"LONG bloqueado — CVD diverge (precio ↑ pero ventas dominan)", ["CVD diverge"])
-            if macd_h < 0:
-                return make("FLAT", "MEDIUM", f"LONG bloqueado — MACD negativo ({macd_h:+.1f})", ["MACD contradice"])
-            conf = "HIGH" if long_score >= 5 else "MEDIUM"
+                long_sigs.append("CVD diverge (tamaño reducido)")
+            conf = "HIGH" if long_score >= 4 else "MEDIUM"
             return make("LONG", conf, f"TREND LONG score:{long_score} | {' | '.join(long_sigs[:3])}", long_sigs)
 
-        if short_score >= 3 and short_score > long_score:
+        if short_score >= 2 and short_score > long_score:
+            # CVD diverge fuerte: reducir tamaño pero no bloquear
             if ind["cvd_divergence"] and not ind["cvd_bearish"]:
-                return make("FLAT", "MEDIUM", f"SHORT bloqueado — CVD diverge (precio ↓ pero compras dominan)", ["CVD diverge"])
-            if macd_h > 0:
-                return make("FLAT", "MEDIUM", f"SHORT bloqueado — MACD positivo ({macd_h:+.1f})", ["MACD contradice"])
-            conf = "HIGH" if short_score >= 5 else "MEDIUM"
+                short_sigs.append("CVD diverge (tamaño reducido)")
+            conf = "HIGH" if short_score >= 4 else "MEDIUM"
             return make("SHORT", conf, f"TREND SHORT score:{short_score} | {' | '.join(short_sigs[:3])}", short_sigs)
 
         return make("FLAT", "MEDIUM", f"TREND sin confluencia (L:{long_score} S:{short_score})", ["Esperando señal"])
@@ -330,23 +328,23 @@ def analyze(ind: dict, current_position: str) -> dict:
         log.info(f"  [RANGE ADX:{ind['adx']:.0f}] BB%:{bb_pct:.2f} RSI:{rsi:.0f} CVD:{'↑' if ind['cvd_bullish'] else '↓'}")
 
         # LONG en banda inferior: precio sobrevendido, CVD empieza a acumular
-        if bb_pct < 0.15 and rsi < 40 and ind["cvd_bullish"]:
+        if bb_pct < 0.20 and rsi < 45 and ind["cvd_bullish"]:
             return make("LONG", "HIGH",
                         f"RANGE reversion LONG | BB:{bb_pct:.2f} RSI:{rsi:.0f} CVD↑",
                         [f"BB lower {bb_pct:.2f} ✓", f"RSI {rsi:.0f} sobrevendido", "CVD acumulando ✓"])
 
-        if bb_pct < 0.25 and rsi < 38:
+        if bb_pct < 0.30 and rsi < 42:
             return make("LONG", "MEDIUM",
                         f"RANGE reversion LONG | BB:{bb_pct:.2f} RSI:{rsi:.0f}",
                         [f"BB lower {bb_pct:.2f}", f"RSI {rsi:.0f}"])
 
         # SHORT en banda superior: precio sobrecomprado, CVD empieza a distribuir
-        if bb_pct > 0.85 and rsi > 60 and ind["cvd_bearish"]:
+        if bb_pct > 0.80 and rsi > 55 and ind["cvd_bearish"]:
             return make("SHORT", "HIGH",
                         f"RANGE reversion SHORT | BB:{bb_pct:.2f} RSI:{rsi:.0f} CVD↓",
                         [f"BB upper {bb_pct:.2f} ✓", f"RSI {rsi:.0f} sobrecomprado", "CVD distribuyendo ✓"])
 
-        if bb_pct > 0.75 and rsi > 62:
+        if bb_pct > 0.70 and rsi > 58:
             return make("SHORT", "MEDIUM",
                         f"RANGE reversion SHORT | BB:{bb_pct:.2f} RSI:{rsi:.0f}",
                         [f"BB upper {bb_pct:.2f}", f"RSI {rsi:.0f}"])
@@ -373,9 +371,9 @@ def analyze(ind: dict, current_position: str) -> dict:
 
     log.info(f"  [MIXED ADX:{ind['adx']:.0f}] L:{long_score} S:{short_score} | BB:{bb_pct:.2f}")
 
-    if long_score >= 4 and long_score > short_score and not ind["cvd_divergence"]:
+    if long_score >= 3 and long_score > short_score:
         return make("LONG", "MEDIUM", f"MIXED LONG score:{long_score}", [f"ADX:{ind['adx']:.0f}", "CVD alineado"])
-    if short_score >= 4 and short_score > long_score and not ind["cvd_divergence"]:
+    if short_score >= 3 and short_score > long_score:
         return make("SHORT", "MEDIUM", f"MIXED SHORT score:{short_score}", [f"ADX:{ind['adx']:.0f}", "CVD alineado"])
 
     return make("FLAT", "MEDIUM", f"MIXED — esperando definición (ADX:{ind['adx']:.0f})", ["Transición de régimen"])

@@ -569,6 +569,17 @@ def strategy_macd_momentum(client, current_position: str, capital: float) -> dic
         if vol_ratio > 1.8: signals.append(f"Vol {vol_ratio:.1f}x ✓")
         return _strat_result("SHORT", "HIGH" if score >= 2 else "MEDIUM",
                              f"Bearish cross+vol {vol_ratio:.1f}x+trend {trend}", signals, price, atr_pct, name)
+    # Momentum sostenido: hist negativo ≥3 velas + precio bajo EMA50 → SHORT (sin cruce fresco)
+    hist_3 = [float(hist.iloc[-i]) for i in range(1, 4)]
+    if all(h < 0 for h in hist_3) and price < ema50_val * 0.999:
+        signals = [f"MACD hist negativo sostenido ({hist_now:.1f})", f"Precio bajo EMA50"]
+        if vol_ratio > 1.5: signals.append(f"Vol {vol_ratio:.1f}x")
+        return _strat_result("SHORT", "MEDIUM", f"Momentum bajista sostenido (hist={hist_now:.1f}, {trend})", signals, price, atr_pct, name)
+    # Momentum alcista sostenido
+    if all(h > 0 for h in hist_3) and price > ema50_val * 1.001:
+        signals = [f"MACD hist positivo sostenido ({hist_now:.1f})", f"Precio sobre EMA50"]
+        if vol_ratio > 1.5: signals.append(f"Vol {vol_ratio:.1f}x")
+        return _strat_result("LONG", "MEDIUM", f"Momentum alcista sostenido (hist={hist_now:.1f}, {trend})", signals, price, atr_pct, name)
     return _strat_result("FLAT", "MEDIUM", f"Sin cruce MACD válido (hist={hist_now:.1f}, trend={trend})", ["Esperando cruce"], price, atr_pct, name)
 
 
@@ -663,7 +674,10 @@ def strategy_cvd_divergence(client, current_position: str, capital: float) -> di
 # SISTEMA DE VOTACIÓN — necesita 3/3 (unanimidad) para entrar
 # ══════════════════════════════════════════════════════════════════════════════
 def run_strategies(client, current_position: str, capital: float) -> dict:
-    """Ejecuta las 3 estrategias y decide por votación (3/3 unanimidad)."""
+    """Ejecuta las 3 estrategias y decide por votación.
+    - LONG: siempre requiere 3/3 unanimidad (conservador)
+    - SHORT: requiere 2/3 cuando macro 1h es bearish (ir con el trend), 3/3 si bullish
+    """
     r1 = strategy_macd_momentum(client, current_position, capital)
     r2 = strategy_rsi_vwap(client, current_position, capital)
     r3 = strategy_cvd_divergence(client, current_position, capital)
@@ -677,6 +691,15 @@ def run_strategies(client, current_position: str, capital: float) -> dict:
     for r in [r1, r2, r3]:
         log.info(f"    {r['_strategy']}: {r['decision']} — {r['reasoning']}")
 
+    # Calcular macro 1h para votación asimétrica
+    try:
+        df1h = fetch_ohlcv(client, interval="1h", limit=220)
+        ema50_1h = df1h["close"].ewm(span=50, adjust=False).mean().iloc[-1]
+        ema200_1h = df1h["close"].ewm(span=200, adjust=False).mean().iloc[-1]
+        macro_1h = "bearish" if ema50_1h < ema200_1h else "bullish"
+    except Exception:
+        macro_1h = "neutral"
+
     price = r1["entry_price"]
     sl_pct = max(r["stop_loss_pct"] for r in [r1, r2, r3])
     tp_pct = max(r["take_profit_pct"] for r in [r1, r2, r3])
@@ -684,16 +707,21 @@ def run_strategies(client, current_position: str, capital: float) -> dict:
     for r in [r1, r2, r3]:
         all_signals.extend(r.get("key_signals", [])[:2])
 
+    # LONG: siempre 3/3
     if long_v == 3:
         return {"decision": "LONG", "confidence": "HIGH",
                 "reasoning": f"Unanimidad 3/3 LONG", "key_signals": all_signals,
                 "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
                 "position_size_pct": 0.10}
-    if short_v == 3:
-        return {"decision": "SHORT", "confidence": "HIGH",
-                "reasoning": f"Unanimidad 3/3 SHORT", "key_signals": all_signals,
+    # SHORT: 2/3 si macro bearish, 3/3 si bullish
+    short_threshold = 2 if macro_1h == "bearish" else 3
+    if short_v >= short_threshold:
+        conf = "HIGH" if short_v == 3 else "MEDIUM"
+        log.info(f"  SHORT {short_v}/{short_threshold} (macro={macro_1h}) → {conf}")
+        return {"decision": "SHORT", "confidence": conf,
+                "reasoning": f"SHORT {short_v}/3 — macro {macro_1h}", "key_signals": all_signals,
                 "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
-                "position_size_pct": 0.10}
+                "position_size_pct": 0.10 if conf == "HIGH" else 0.07}
     # Mayoría HOLD — mantener posición
     hold_rs = [r for r in [r1, r2, r3] if r["decision"] == "HOLD"]
     if len(hold_rs) >= 2:
