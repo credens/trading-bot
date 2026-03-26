@@ -1,0 +1,29 @@
+{
+  "bot": "binance",
+  "initial_capital": 500.0,
+  "current_capital": 500.0,
+  "total_pnl": 0.0,
+  "total_pnl_raw": 0.0,
+  "total_pnl_pct": 0.0,
+  "win_rate": 0.0,
+  "max_drawdown": 0.0,
+  "open_trades": [],
+  "positions": {},
+  "closed_trades": [],
+  "all_closed_trades": [],
+  "total_trades": 0,
+  "btc_price": 0.0,
+  "rsi": 50.0,
+  "trend": "neutral",
+  "macd_cross": "neutral",
+  "funding_rate": 0.0,
+  "vol_ratio": 1.0,
+  "cycle_log": [
+    {
+      "time": "--:--",
+      "msg": "Esperando primer ciclo..."
+    }
+  ],
+  "last_updated": "2026-03-26T09:51:51.496857",
+  "cooldowns": {}
+}

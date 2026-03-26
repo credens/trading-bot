@@ -27,6 +27,7 @@ STATE_FILES = {
     "altcoins": BASE_DIR / "altcoin_data" / "state.json",
     "rsi":      BASE_DIR / "rsi_bot_data" / "state.json",
     "scalping": BASE_DIR / "paper_trading" / "scalping_state.json",
+    "testbot":  BASE_DIR / "paper_trading" / "test_bot_state.json",
 }
 
 
