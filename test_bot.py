@@ -30,14 +30,13 @@ LEVERAGE       = 10
 INITIAL_CAP    = 500.0
 CYCLE_MIN      = 5
 STATE_FILE     = Path(__file__).parent / "paper_trading" / "test_bot_state.json"
-LOG_FILE       = "/tmp/test_bot.log"
+LOG_FILE       = str(Path(__file__).parent / "logs" / "test_bot.log")
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [TEST] %(message)s",
     handlers=[
-        logging.StreamHandler(),
         logging.FileHandler(LOG_FILE),
     ]
 )
@@ -108,8 +107,8 @@ def strategy_funding_extreme(client, current_position: str) -> dict:
         if rsi > 55: signals.append(f"RSI {rsi:.0f} — no sobrevendido ✓")
         return _strat(name, "SHORT", conf, f"Funding extremo largo ({funding:+.4f}%)", signals, price, sl_pct, tp_pct)
 
-    if funding < -0.03:
-        conf = "HIGH" if funding < -0.06 else "MEDIUM"
+    if funding < -0.015:
+        conf = "HIGH" if funding < -0.04 else "MEDIUM"
         signals = [f"Funding negativo {funding:.4f}%", "Short squeeze potencial"]
         if rsi < 45: signals.append(f"RSI {rsi:.0f} — no sobrecomprado ✓")
         return _strat(name, "LONG", conf, f"Funding extremo corto ({funding:+.4f}%)", signals, price, sl_pct, tp_pct)
@@ -162,12 +161,12 @@ def strategy_bb_squeeze(client, current_position: str) -> dict:
             return _strat(name, "FLAT", "HIGH", "Precio rompe banda superior → cierre SHORT", ["Salida BB"], price, sl_pct, tp_pct)
         return _strat(name, "HOLD", "MEDIUM", f"SHORT BB activo | Precio: {'LOWER' if below_lower else 'MIDDLE'}", ["Manteniendo"], price, sl_pct, tp_pct)
 
-    if squeeze and above_upper and vol_ratio > 1.5 and rsi < 78:
+    if squeeze and above_upper and vol_ratio > 1.1 and rsi < 78:
         conf = "HIGH" if vol_ratio > 2.0 else "MEDIUM"
         signals = [f"Squeeze → LONG breakout ✓", f"Vol {vol_ratio:.1f}x ✓", f"RSI {rsi:.0f}"]
         return _strat(name, "LONG", conf, f"BB squeeze breakout LONG | vol {vol_ratio:.1f}x", signals, price, sl_pct, tp_pct)
 
-    if squeeze and below_lower and vol_ratio > 1.5 and rsi > 22:
+    if squeeze and below_lower and vol_ratio > 1.1 and rsi > 22:
         conf = "HIGH" if vol_ratio > 2.0 else "MEDIUM"
         signals = [f"Squeeze → SHORT breakout ✓", f"Vol {vol_ratio:.1f}x ✓", f"RSI {rsi:.0f}"]
         return _strat(name, "SHORT", conf, f"BB squeeze breakout SHORT | vol {vol_ratio:.1f}x", signals, price, sl_pct, tp_pct)
@@ -238,6 +237,17 @@ def strategy_rsi_divergence(client, current_position: str) -> dict:
             return _strat(name, "FLAT", "HIGH", f"Divergencia bullish o RSI bajo → cierre", ["Salida divergencia"], price, sl_pct, tp_pct)
         return _strat(name, "HOLD", "MEDIUM", f"SHORT activo | RSI {rsi:.0f}", [f"RSI {rsi:.0f}"], price, sl_pct, tp_pct)
 
+    # RSI extremo: entrada directa aunque no haya divergencia clásica
+    if rsi < 32:
+        conf = "HIGH" if rsi < 25 else "MEDIUM"
+        signals = [f"RSI sobrevendido extremo {rsi:.0f}", "Zona de rebote potencial 1h"]
+        return _strat(name, "LONG", conf, f"RSI oversold 1h (RSI={rsi:.0f})", signals, price, sl_pct, tp_pct)
+
+    if rsi > 68:
+        conf = "HIGH" if rsi > 75 else "MEDIUM"
+        signals = [f"RSI sobrecomprado extremo {rsi:.0f}", "Zona de reversión potencial 1h"]
+        return _strat(name, "SHORT", conf, f"RSI overbought 1h (RSI={rsi:.0f})", signals, price, sl_pct, tp_pct)
+
     if bullish_div and rsi < 50:
         conf = "HIGH" if div_strength > 8 else "MEDIUM"
         signals = [f"Divergencia alcista 1h ✓ (Δ{div_strength:.0f})", f"RSI {rsi:.0f}", "Precio lower low, RSI higher low"]
@@ -275,6 +285,22 @@ def run_strategies(client, current_position: str) -> dict:
     all_signals = []
     for r in [r1, r2, r3]:
         all_signals.extend(r.get("key_signals", [])[:2])
+
+    # 1/3 HIGH confidence: entrada directa (señal muy fuerte)
+    high_longs  = [r for r in [r1, r2, r3] if r["decision"] == "LONG"  and r.get("confidence") == "HIGH"]
+    high_shorts = [r for r in [r1, r2, r3] if r["decision"] == "SHORT" and r.get("confidence") == "HIGH"]
+
+    if high_longs:
+        return {"decision": "LONG", "confidence": "HIGH",
+                "reasoning": f"Señal HIGH {high_longs[0]['_strategy']}", "key_signals": all_signals,
+                "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
+                "position_size_pct": 0.10}
+
+    if high_shorts:
+        return {"decision": "SHORT", "confidence": "HIGH",
+                "reasoning": f"Señal HIGH {high_shorts[0]['_strategy']}", "key_signals": all_signals,
+                "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
+                "position_size_pct": 0.10}
 
     if long_v >= 2:
         conf = "HIGH" if long_v == 3 else "MEDIUM"
