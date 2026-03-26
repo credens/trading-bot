@@ -37,7 +37,7 @@ MAX_POSITIONS    = int(os.getenv("ALTCOIN_MAX_POSITIONS","5"))    # máx 5 posic
 TOTAL_CAPITAL    = float(os.getenv("ALTCOIN_CAPITAL",   "500"))
 DRY_RUN          = os.getenv("DRY_RUN", "true").lower() == "true"
 INTERVAL_MINUTES = int(os.getenv("ALTCOIN_INTERVAL",   "3"))
-MIN_VOLUME_USDT  = float(os.getenv("ALTCOIN_MIN_VOLUME","500000000"))  # $500M — alta liquidez
+MIN_VOLUME_USDT  = float(os.getenv("ALTCOIN_MIN_VOLUME","300000000"))  # $300M — suficiente liquidez
 TOP_N            = int(os.getenv("ALTCOIN_TOP_N",       "20"))   # escanear top 20 por volumen
 CANDLE_INTERVAL  = os.getenv("ALTCOIN_CANDLE", "5m")            # velas de 5m
 DEFAULT_SL_PCT   = float(os.getenv("ALTCOIN_SL",  "0.008"))     # SL 0.8%
@@ -800,7 +800,7 @@ def run_cycle(client):
             return dt.replace(tzinfo=None) if dt.tzinfo else dt
         except Exception:
             return datetime.min
-    cooldowns = {s: t for s, t in cooldowns.items() if parse_dt(t) > now}
+    cooldowns = {s: t for s, t in cooldowns.items() if parse_dt(t) > now}  # limpia expirados
     state["cooldowns"] = cooldowns
 
     # Blacklist dinámica: símbolos con WR < 40% después de ≥8 trades

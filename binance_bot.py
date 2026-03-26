@@ -911,17 +911,28 @@ def run_cycle(client, paper=None):
     confidence = decision.get("confidence", "LOW")
 
     # ── MACRO OVERRIDE DURO: veto absoluto por macro 1h ──────────────────────
-    # Regla: bearish → SOLO SHORT. bullish → SOLO LONG. neutral → FLAT.
+    # Excepción: RSI < 30 + BB < 0.10 → rebote extremo, permitir LONG aunque macro bearish
     macro_trend = indicators.get("macro_trend", "neutral")
+    rsi_now   = indicators.get("rsi", 50)
+    bb_now    = indicators.get("bb_pct", 0.5)
+    oversold_extreme = (rsi_now < 30 and bb_now < 0.10)
+    overbought_extreme = (rsi_now > 70 and bb_now > 0.90)
+
     if action in ("LONG", "SHORT"):
         if macro_trend == "bearish" and action == "LONG":
-            log.warning(f"  🚫 LONG vetado — macro 1h BEARISH (HARD VETO)")
-            action = "FLAT"; decision["decision"] = "FLAT"
-            decision["reasoning"] = "LONG vetado: macro 1h BEARISH"
+            if oversold_extreme:
+                log.info(f"  ⚡ LONG permitido — RSI extremo ({rsi_now:.0f}) + BB lower ({bb_now:.2f}) overrides macro bearish")
+            else:
+                log.warning(f"  🚫 LONG vetado — macro 1h BEARISH (HARD VETO)")
+                action = "FLAT"; decision["decision"] = "FLAT"
+                decision["reasoning"] = "LONG vetado: macro 1h BEARISH"
         elif macro_trend == "bullish" and action == "SHORT":
-            log.warning(f"  🚫 SHORT vetado — macro 1h BULLISH (HARD VETO)")
-            action = "FLAT"; decision["decision"] = "FLAT"
-            decision["reasoning"] = "SHORT vetado: macro 1h BULLISH"
+            if overbought_extreme:
+                log.info(f"  ⚡ SHORT permitido — RSI extremo ({rsi_now:.0f}) + BB upper ({bb_now:.2f}) overrides macro bullish")
+            else:
+                log.warning(f"  🚫 SHORT vetado — macro 1h BULLISH (HARD VETO)")
+                action = "FLAT"; decision["decision"] = "FLAT"
+                decision["reasoning"] = "SHORT vetado: macro 1h BULLISH"
         elif macro_trend == "neutral":
             log.info(f"  ⏸️  Macro 1h NEUTRAL — no operar (esperando tendencia clara)")
             action = "FLAT"; decision["decision"] = "FLAT"
