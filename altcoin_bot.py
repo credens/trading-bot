@@ -32,16 +32,18 @@ log = logging.getLogger(__name__)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-LEVERAGE         = int(os.getenv("ALTCOIN_LEVERAGE",    "3"))
-MAX_POSITIONS    = int(os.getenv("ALTCOIN_MAX_POSITIONS","3"))   # máx 3 posiciones simultáneas
+LEVERAGE         = int(os.getenv("ALTCOIN_LEVERAGE",    "20"))   # x20
+MAX_POSITIONS    = int(os.getenv("ALTCOIN_MAX_POSITIONS","5"))    # máx 5 posiciones simultáneas
 TOTAL_CAPITAL    = float(os.getenv("ALTCOIN_CAPITAL",   "500"))
 DRY_RUN          = os.getenv("DRY_RUN", "true").lower() == "true"
 INTERVAL_MINUTES = int(os.getenv("ALTCOIN_INTERVAL",   "3"))
 MIN_VOLUME_USDT  = float(os.getenv("ALTCOIN_MIN_VOLUME","500000000"))  # $500M — alta liquidez
-TOP_N            = int(os.getenv("ALTCOIN_TOP_N",       "15"))   # escanear top 15 por volumen
+TOP_N            = int(os.getenv("ALTCOIN_TOP_N",       "20"))   # escanear top 20 por volumen
 CANDLE_INTERVAL  = os.getenv("ALTCOIN_CANDLE", "5m")            # velas de 5m
 DEFAULT_SL_PCT   = float(os.getenv("ALTCOIN_SL",  "0.008"))     # SL 0.8%
-DEFAULT_TP_PCT   = float(os.getenv("ALTCOIN_TP",  "0.015"))     # TP 1.5%
+DEFAULT_TP_PCT   = float(os.getenv("ALTCOIN_TP",  "0.025"))     # TP 2.5% (R:R 3.1:1)
+TRAILING_TRIGGER = float(os.getenv("ALTCOIN_TRAIL", "0.005"))   # mover SL a BE cuando +0.5%
+TIME_LIMIT_MIN   = int(os.getenv("ALTCOIN_TIME_LIMIT", "90"))    # cerrar si stale > 90min
 
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
@@ -497,13 +499,13 @@ Vol: {vol_ratio:.1f}x | ATR: {atr_pct:.2f}% | Funding: {funding:+.4f}%
 Score: {score:+d} → {technical_direction} | Señales: {', '.join(signals[:4])}
 Posiciones: {open_longs}L / {open_shorts}S abiertas
 
-Respondé SOLO JSON (SL máx 2%, TP máx 4%):
+Respondé SOLO JSON (SL máx 1.5%, TP máx 5%):
 {{
   "direction": "{technical_direction}|SKIP",
   "confidence": "HIGH|MEDIUM|LOW",
   "reasoning": "1 oración",
-  "stop_loss_pct": 0.015,
-  "take_profit_pct": 0.030
+  "stop_loss_pct": 0.008,
+  "take_profit_pct": 0.025
 }}
 SKIP solo si la señal es claramente inválida."""
 
@@ -517,7 +519,7 @@ SKIP solo si la señal es claramente inválida."""
                 return None
             reasoning = result.get("reasoning", f"Score {score:+d}")
             sl_pct = min(float(result.get("stop_loss_pct",  DEFAULT_SL_PCT)), 0.015)
-            tp_pct = min(float(result.get("take_profit_pct", DEFAULT_TP_PCT)), 0.03)
+            tp_pct = min(float(result.get("take_profit_pct", DEFAULT_TP_PCT)), 0.05)
             log.info(f"    Claude confirma: {direction} | {confidence} | {reasoning}")
         except Exception as e:
             log.warning(f"    Error Claude: {e} — usando scoring técnico")
@@ -604,11 +606,54 @@ def open_position(client, state: dict, symbol: str, analysis: dict, indicators: 
             log.error(f"  Error abriendo {symbol}: {e}")
 
 
-def check_positions(client, state: dict):
-    """Verifica posiciones abiertas y cierra las que tocaron SL/TP."""
-    to_close = []
+def get_btc_macro(client) -> str:
+    """BTC 1h macro trend: bullish / bearish. Usado para filtrar entradas."""
+    try:
+        klines = client.futures_klines(symbol="BTCUSDT", interval="1h", limit=210)
+        closes = pd.Series([float(k[4]) for k in klines])
+        ema50  = closes.ewm(span=50,  adjust=False).mean().iloc[-1]
+        ema200 = closes.ewm(span=200, adjust=False).mean().iloc[-1]
+        return "bullish" if ema50 > ema200 else "bearish"
+    except Exception:
+        return "neutral"
 
-    for symbol, pos in state["positions"].items():
+
+def _close_position(state, symbol, pos, exit_price, exit_reason, note=""):
+    """Helper: cierra una posición, actualiza estado y loguea."""
+    entry = pos["entry_price"]
+    direction = pos["direction"]
+    lev = pos.get("leverage", LEVERAGE)
+
+    pnl_pct = (exit_price - entry) / entry * lev
+    if direction == "SHORT":
+        pnl_pct = -pnl_pct
+    pnl = max(round(pos["size_usdt"] * pnl_pct, 2), -pos["size_usdt"])
+    pnl_pct = pnl / pos["size_usdt"]
+
+    trade = {**pos, "exit_price": exit_price, "exit_time": datetime.now().isoformat(),
+             "exit_reason": exit_reason, "pnl": pnl, "pnl_pct": round(pnl_pct * 100, 2)}
+    state["closed_trades"].append(trade)
+    state["capital"]   += pos["size_usdt"] + pnl
+    state["total_pnl"] += pnl
+
+    emoji = "✅" if pnl > 0 else "❌"
+    msg = f"{emoji} {exit_reason} {symbol}{' '+note if note else ''} | exit ${exit_price:.6f} | P&L {'+' if pnl>=0 else ''}${pnl:.2f} ({pnl_pct*100:+.1f}%)"
+    add_log(state, msg)
+    log.info(f"  [PAPER] {msg}")
+    try:
+        _log_trade({**trade, "bot": "altcoins", "symbol": symbol,
+                    "size": trade.get("size_usdt", 0), "leverage": lev})
+    except Exception:
+        pass
+    return pnl
+
+
+def check_positions(client, state: dict):
+    """Verifica posiciones abiertas: SL/TP, trailing stop, time limit, emergency."""
+    to_close = []
+    now = datetime.now()
+
+    for symbol, pos in list(state["positions"].items()):
         try:
             if DRY_RUN:
                 ticker = client.futures_ticker(symbol=symbol)
@@ -617,70 +662,61 @@ def check_positions(client, state: dict):
                 position_info = client.futures_position_information(symbol=symbol)
                 current_price = float(position_info[0]["markPrice"])
 
-            # Sanity: price should not be zero or extremely low
-            entry = pos["entry_price"]
-            if current_price <= 0 or current_price < entry * 0.01:
-                log.warning(f"  ⚠️  {symbol}: precio sospechoso ${current_price:.8f} (entrada ${entry:.8f}) — cierre de emergencia")
-                current_price = entry * 0.01  # cap pérdida al 99%
-
+            entry     = pos["entry_price"]
             direction = pos["direction"]
+            lev       = pos.get("leverage", LEVERAGE)
+
+            if current_price <= 0 or current_price < entry * 0.01:
+                log.warning(f"  ⚠️  {symbol}: precio sospechoso — cierre de emergencia")
+                current_price = entry * 0.01
+
             sl = pos["stop_loss"]
             tp = pos["take_profit"]
 
-            # Unrealized P&L at current price
-            raw_change = (current_price - entry) / entry
-            unrealized_pct = raw_change * LEVERAGE if direction == "LONG" else -raw_change * LEVERAGE
+            raw_change    = (current_price - entry) / entry
+            unrealized_pct = (raw_change if direction == "LONG" else -raw_change) * lev
 
+            # ── Trailing stop: mover SL a breakeven cuando +0.5% ────────────
+            if not pos.get("trailing_activated") and unrealized_pct >= TRAILING_TRIGGER:
+                # SL sube/baja hasta entry (breakeven) + pequeño buffer
+                be_buffer = entry * 0.001  # 0.1% buffer sobre entrada
+                new_sl = entry + be_buffer if direction == "LONG" else entry - be_buffer
+                if (direction == "LONG" and new_sl > sl) or (direction == "SHORT" and new_sl < sl):
+                    pos["stop_loss"] = round(new_sl, 8)
+                    pos["trailing_activated"] = True
+                    state["positions"][symbol] = pos
+                    log.info(f"  🔒 TRAILING {symbol}: SL movido a BE ${new_sl:.6f} (unrealized {unrealized_pct*100:+.1f}%)")
+
+            # ── Condiciones de cierre ─────────────────────────────────────────
             hit_tp = (direction == "LONG" and current_price >= tp) or \
                      (direction == "SHORT" and current_price <= tp)
-            hit_sl = (direction == "LONG" and current_price <= sl) or \
-                     (direction == "SHORT" and current_price >= sl)
-
-            # Emergency exit: unrealized loss > 20% of position (prevents gap/delist losses)
+            hit_sl = (direction == "LONG" and current_price <= pos["stop_loss"]) or \
+                     (direction == "SHORT" and current_price >= pos["stop_loss"])
             emergency = unrealized_pct < -0.20
 
-            if hit_tp or hit_sl or emergency:
+            # Time limit: cerrar posición stale después de TIME_LIMIT_MIN
+            entry_dt = datetime.fromisoformat(pos["entry_time"])
+            time_expired = (now - entry_dt).total_seconds() / 60 >= TIME_LIMIT_MIN
+
+            if hit_tp or hit_sl or emergency or time_expired:
                 if emergency and not hit_sl:
                     exit_reason = "EMERGENCY_EXIT"
-                    exit_price = current_price
-                    log.warning(f"  🚨 EMERGENCY EXIT {symbol}: pérdida {unrealized_pct*100:.1f}% supera límite")
+                    exit_price  = current_price
+                    log.warning(f"  🚨 EMERGENCY EXIT {symbol}: {unrealized_pct*100:.1f}%")
+                elif time_expired and not hit_tp and not hit_sl:
+                    exit_reason = "TIME_LIMIT"
+                    exit_price  = current_price
+                    log.info(f"  ⏰ TIME_LIMIT {symbol}: {TIME_LIMIT_MIN}min expirado")
                 else:
                     exit_reason = "TAKE_PROFIT" if hit_tp else "STOP_LOSS"
-                    exit_price = tp if hit_tp else sl
+                    exit_price  = tp if hit_tp else pos["stop_loss"]
 
-                pnl_pct = (exit_price - entry) / entry * LEVERAGE
-                if direction == "SHORT":
-                    pnl_pct = -pnl_pct
-
-                # Hard cap: can't lose more than position size
-                pnl = max(round(pos["size_usdt"] * pnl_pct, 2), -pos["size_usdt"])
-                pnl_pct = pnl / pos["size_usdt"]
-
-                trade = {**pos, "exit_price": exit_price, "exit_time": datetime.now().isoformat(),
-                         "exit_reason": exit_reason, "pnl": pnl, "pnl_pct": round(pnl_pct*100, 2)}
-                state["closed_trades"].append(trade)
-                state["capital"] += pos["size_usdt"] + pnl
-                state["total_pnl"] += pnl
+                _close_position(state, symbol, pos, exit_price, exit_reason)
                 to_close.append(symbol)
 
-                # Cooldown after SL/emergency: no re-entry for 2 min
                 if exit_reason in ("STOP_LOSS", "EMERGENCY_EXIT"):
-                    cooldown_until = (datetime.now() + timedelta(minutes=2)).isoformat()
+                    cooldown_until = (now + timedelta(minutes=5)).isoformat()
                     state.setdefault("cooldowns", {})[symbol] = cooldown_until
-                    log.info(f"  ⏱️  {symbol} en cooldown 60 min")
-
-                emoji = "✅" if pnl > 0 else "❌"
-                msg = f"{emoji} {exit_reason} {symbol} | exit ${exit_price:.6f} | P&L {'+' if pnl>=0 else ''}${pnl:.2f} ({pnl_pct*100:+.1f}%)"
-                add_log(state, msg)
-                log.info(f"  [PAPER] {msg}")
-
-                # Log externo de estadísticas
-                try:
-                    _log_trade({**trade, "bot": "altcoins", "symbol": symbol,
-                                "size": trade.get("size_usdt", 0),
-                                "leverage": LEVERAGE})
-                except Exception:
-                    pass
 
         except Exception as e:
             log.warning(f"Error verificando {symbol}: {e}")
@@ -793,6 +829,11 @@ def run_cycle(client):
     if len(candidates) < len(altcoins):
         skipped = [s for s in cooldowns]
         log.info(f"  En cooldown (cierre manual): {skipped}")
+    # BTC macro filter (1h EMA50 vs EMA200)
+    btc_macro = get_btc_macro(client)
+    log.info(f"  BTC macro 1h: {btc_macro}")
+    state["btc_macro"] = btc_macro
+
     log.info(f"\nAnalizando {min(len(candidates), slots*2)} candidatos (5m candles)...")
     state["scanning"] = True
     state["last_scan"] = []
@@ -824,6 +865,14 @@ def run_cycle(client):
         direction = analysis.get("direction", "SKIP")
         confidence = analysis.get("confidence", "LOW")
 
+        # ── BTC macro filter ─────────────────────────────────────────────────
+        if btc_macro == "bearish" and direction == "LONG" and strategy != "MEAN_REVERSION":
+            log.info(f"    🚫 LONG vetado — BTC macro bearish ({strategy})")
+            continue
+        if btc_macro == "bullish" and direction == "SHORT" and strategy != "MEAN_REVERSION":
+            log.info(f"    🚫 SHORT vetado — BTC macro bullish ({strategy})")
+            continue
+
         scan_entry = {
             "symbol": symbol,
             "rsi": indicators["rsi"],
@@ -847,7 +896,7 @@ def run_cycle(client):
             log.info(f"    → SKIP ({strategy}, {confidence})")
             continue
 
-        # Log de dirección vs tendencia (informativo, no bloquea)
+        # Log de dirección vs tendencia (informativo)
         trend = indicators.get("trend", "neutral")
         if trend == "bullish" and direction == "SHORT":
             log.info(f"    → SHORT contra tendencia bullish (mean reversion)")

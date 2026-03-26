@@ -488,7 +488,15 @@ function AltcoinPanel({ data, liveprices, onClose }) {
           <div style={{ color:"#bbb", fontSize:11 }}>Top 20 por volumen · Claude AI · paper trading</div>
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-          {scanning && <div style={{ width:8, height:8, borderRadius:"50%", background:"#ff64c8" }} />}
+          {(() => {
+            const now = new Date();
+            const cooldowns = data.cooldowns || {};
+            const activeCooldowns = Object.entries(cooldowns).filter(([,t]) => new Date(t) > now);
+            if (scanning) return <span style={{ background:"rgba(255,100,200,0.15)", border:"1px solid #ff64c855", color:"#ff64c8", borderRadius:6, padding:"3px 8px", fontSize:10, fontFamily:"monospace", fontWeight:700 }}>🔍 ESCANEANDO</span>;
+            if (open.length > 0) return <span style={{ background:"rgba(0,255,136,0.1)", border:"1px solid #00ff8855", color:"#00ff88", borderRadius:6, padding:"3px 8px", fontSize:10, fontFamily:"monospace", fontWeight:700 }}>● OPERANDO ({open.length})</span>;
+            if (activeCooldowns.length > 0) return <span style={{ background:"rgba(255,184,0,0.1)", border:"1px solid #ffb80055", color:"#ffb800", borderRadius:6, padding:"3px 8px", fontSize:10, fontFamily:"monospace" }}>⏳ CD ({activeCooldowns.length} sym)</span>;
+            return <span style={{ background:"rgba(0,204,102,0.08)", border:"1px solid #00cc6633", color:"#00cc66", borderRadius:6, padding:"3px 8px", fontSize:10, fontFamily:"monospace" }}>● ACTIVO</span>;
+          })()}
           <Badge text="PAPER" color="#ff64c8" />
         </div>
       </div>
