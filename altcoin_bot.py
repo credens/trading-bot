@@ -19,6 +19,7 @@ import json
 import time
 import logging
 from datetime import datetime, timedelta
+from trade_logger import log_trade as _log_trade
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
@@ -31,23 +32,32 @@ log = logging.getLogger(__name__)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-LEVERAGE = int(os.getenv("ALTCOIN_LEVERAGE", "3"))
-MAX_POSITIONS = int(os.getenv("ALTCOIN_MAX_POSITIONS", "5"))
-TOTAL_CAPITAL = float(os.getenv("ALTCOIN_CAPITAL", "500"))
-DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
-INTERVAL_MINUTES = int(os.getenv("ALTCOIN_INTERVAL", "3"))
-MIN_VOLUME_USDT = float(os.getenv("ALTCOIN_MIN_VOLUME", "50000000"))  # $50M diarios
+LEVERAGE         = int(os.getenv("ALTCOIN_LEVERAGE",    "3"))
+MAX_POSITIONS    = int(os.getenv("ALTCOIN_MAX_POSITIONS","3"))   # máx 3 posiciones simultáneas
+TOTAL_CAPITAL    = float(os.getenv("ALTCOIN_CAPITAL",   "500"))
+DRY_RUN          = os.getenv("DRY_RUN", "true").lower() == "true"
+INTERVAL_MINUTES = int(os.getenv("ALTCOIN_INTERVAL",   "3"))
+MIN_VOLUME_USDT  = float(os.getenv("ALTCOIN_MIN_VOLUME","500000000"))  # $500M — alta liquidez
+TOP_N            = int(os.getenv("ALTCOIN_TOP_N",       "15"))   # escanear top 15 por volumen
+CANDLE_INTERVAL  = os.getenv("ALTCOIN_CANDLE", "5m")            # velas de 5m
+DEFAULT_SL_PCT   = float(os.getenv("ALTCOIN_SL",  "0.008"))     # SL 0.8%
+DEFAULT_TP_PCT   = float(os.getenv("ALTCOIN_TP",  "0.015"))     # TP 1.5%
 
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 
-DATA_DIR = Path("./altcoin_data")
+DATA_DIR = Path(__file__).parent / "altcoin_data"
 DATA_DIR.mkdir(exist_ok=True)
 STATE_FILE = DATA_DIR / "state.json"
 
-# Excluir stablecoins y tokens irrelevantes
+# Excluir stablecoins y tokens con historial de problemas de liquidez
 EXCLUDE = {"BUSDUSDT", "USDCUSDT", "TUSDUSDT", "USDTUSDT", "BTCUSDT",
-           "BTCDOMUSDT", "DEFIUSDT", "BNXUSDT", "1000SHIBUSDT"}
+           "BTCDOMUSDT", "DEFIUSDT", "BNXUSDT", "1000SHIBUSDT",
+           "SIRENUSDT", "LOOMUSDT", "CVPUSDT", "BALUSDT",  # historial flash crash
+           "1000LUNCUSDT", "LUNA2USDT",  # tokens volátiles extremos
+           # Baja liquidez o WR consistentemente bajo:
+           "ONTUSDT", "RIVERUSDT", "HYPEUSDT", "XAGUSDT", "XAUUSDT",
+           "PAXGUSDT", "1000PEPEUSDT"}
 
 from ai_client import call_ai, parse_json_response, is_available, get_model_info
 log.info(f"AI Engine: {get_model_info()}")
@@ -61,8 +71,8 @@ def get_client():
 
 # ─── Market Scanner ───────────────────────────────────────────────────────────
 
-def get_top_altcoins(client, n: int = 20) -> list[dict]:
-    """Trae las top N altcoins por volumen 24h en Binance Futures."""
+def get_top_altcoins(client, n: int = TOP_N) -> list[dict]:
+    """Top N altcoins por volumen 24h — solo los más líquidos."""
     try:
         tickers = client.futures_ticker()
         altcoins = []
@@ -73,7 +83,6 @@ def get_top_altcoins(client, n: int = 20) -> list[dict]:
                 continue
             if sym in EXCLUDE:
                 continue
-            # Solo perps activos
             volume = float(t.get("quoteVolume", 0))
             if volume < MIN_VOLUME_USDT:
                 continue
@@ -87,10 +96,9 @@ def get_top_altcoins(client, n: int = 20) -> list[dict]:
 
         altcoins.sort(key=lambda x: x["volume_24h"], reverse=True)
         top = altcoins[:n]
-        log.info(f"Top {len(top)} altcoins por volumen:")
-        for a in top[:5]:
+        log.info(f"Top {len(top)} altcoins (>${MIN_VOLUME_USDT/1e6:.0f}M vol):")
+        for a in top:
             log.info(f"  {a['symbol']:12} vol: ${a['volume_24h']/1e6:.0f}M | {a['change_24h']:+.1f}%")
-        log.info(f"  ... y {len(top)-5} más")
         return top
 
     except Exception as e:
@@ -101,9 +109,9 @@ def get_top_altcoins(client, n: int = 20) -> list[dict]:
 # ─── Indicadores ──────────────────────────────────────────────────────────────
 
 def get_indicators(client, symbol: str) -> Optional[dict]:
-    """Calcula indicadores técnicos para una altcoin."""
+    """Indicadores técnicos en velas de 5m — EMA 9/21, VWAP, RSI, MACD, BB, ATR."""
     try:
-        klines = client.futures_klines(symbol=symbol, interval="15m", limit=100)
+        klines = client.futures_klines(symbol=symbol, interval=CANDLE_INTERVAL, limit=120)
         df = pd.DataFrame(klines, columns=[
             "ts", "open", "high", "low", "close", "volume",
             "ct", "qv", "trades", "tbb", "tbq", "ignore"
@@ -111,43 +119,63 @@ def get_indicators(client, symbol: str) -> Optional[dict]:
         for col in ["open", "high", "low", "close", "volume"]:
             df[col] = df[col].astype(float)
 
-        close = df["close"]
-        high = df["high"]
-        low = df["low"]
+        close  = df["close"]
+        high   = df["high"]
+        low    = df["low"]
         volume = df["volume"]
 
-        # RSI
+        # EMA 9 / 21 (señal principal, como scalping)
+        ema9  = close.ewm(span=9,  adjust=False).mean()
+        ema21 = close.ewm(span=21, adjust=False).mean()
+        ema9_cur  = float(ema9.iloc[-1])
+        ema21_cur = float(ema21.iloc[-1])
+        ema9_prev = float(ema9.iloc[-2])
+        ema21_prev = float(ema21.iloc[-2])
+        cross_bullish = ema9_prev <= ema21_prev and ema9_cur > ema21_cur
+        cross_bearish = ema9_prev >= ema21_prev and ema9_cur < ema21_cur
+        ema_trend = "bullish" if ema9_cur > ema21_cur else "bearish"
+
+        # VWAP (sesión — últimas 78 velas de 5m ≈ 6.5h de mercado)
+        typ_price = (high + low + close) / 3
+        vwap = float((typ_price * volume).rolling(78).sum().iloc[-1] /
+                     volume.rolling(78).sum().iloc[-1])
+        price_vs_vwap = (float(close.iloc[-1]) - vwap) / vwap * 100  # % sobre/bajo VWAP
+
+        # RSI 14
         delta = close.diff()
         gain = delta.clip(lower=0).rolling(14).mean()
         loss = (-delta.clip(upper=0)).rolling(14).mean()
         rs = gain / loss.replace(0, np.nan)
         rsi = float((100 - (100 / (1 + rs))).iloc[-1])
 
-        # MACD
-        ema12 = close.ewm(span=12, adjust=False).mean()
-        ema26 = close.ewm(span=26, adjust=False).mean()
-        macd_hist = float((ema12 - ema26 - (ema12 - ema26).ewm(span=9, adjust=False).mean()).iloc[-1])
-        prev_macd_hist = float((ema12 - ema26 - (ema12 - ema26).ewm(span=9, adjust=False).mean()).iloc[-2])
+        # MACD rápido (3,10,5) — igual que scalping
+        macd_line  = close.ewm(span=3,  adjust=False).mean() - close.ewm(span=10, adjust=False).mean()
+        signal     = macd_line.ewm(span=5, adjust=False).mean()
+        macd_hist  = float((macd_line - signal).iloc[-1])
+        prev_hist  = float((macd_line - signal).iloc[-2])
+        macd_cross = ("bullish" if macd_hist > 0 and prev_hist <= 0
+                      else "bearish" if macd_hist < 0 and prev_hist >= 0
+                      else "neutral")
 
         # Bollinger
-        sma20 = close.rolling(20).mean()
-        std20 = close.rolling(20).std()
+        sma20  = close.rolling(20).mean()
+        std20  = close.rolling(20).std()
         bb_pct = float(((close - (sma20 - 2*std20)) / (4*std20)).iloc[-1])
 
         # ATR
-        tr = pd.concat([high-low, (high-close.shift()).abs(), (low-close.shift()).abs()], axis=1).max(axis=1)
+        tr     = pd.concat([high-low, (high-close.shift()).abs(), (low-close.shift()).abs()], axis=1).max(axis=1)
         atr_pct = float(tr.rolling(14).mean().iloc[-1] / close.iloc[-1] * 100)
 
-        # Volumen
+        # Volumen relativo
         vol_ratio = float(volume.iloc[-1] / volume.rolling(20).mean().iloc[-1])
 
-        # Volatilidad histórica (para que Claude elija estrategia)
-        returns = close.pct_change().dropna()
-        hist_vol = float(returns.rolling(20).std().iloc[-1] * 100)  # % diario
+        # Volatilidad histórica
+        returns   = close.pct_change().dropna()
+        hist_vol  = float(returns.rolling(20).std().iloc[-1] * 100)
         avg_range = float(((high - low) / close).rolling(20).mean().iloc[-1] * 100)
 
-        # Tendencia
-        ema50 = float(close.ewm(span=50, adjust=False).mean().iloc[-1])
+        # EMA 50/200 para tendencia macro
+        ema50  = float(close.ewm(span=50,  adjust=False).mean().iloc[-1])
         ema200 = float(close.ewm(span=200, adjust=False).mean().iloc[-1])
 
         # Funding rate
@@ -157,25 +185,30 @@ def get_indicators(client, symbol: str) -> Optional[dict]:
         except Exception:
             funding_rate = 0
 
-        # Verificar NaN antes de retornar
-        if any(v != v for v in [rsi, bb_pct, vol_ratio, atr_pct]):  # NaN check
+        # NaN check
+        if any(v != v for v in [rsi, bb_pct, vol_ratio, atr_pct, vwap]):
             return None
 
         return {
-            "symbol": symbol,
-            "price": float(close.iloc[-1]),
-            "rsi": round(rsi, 2),
-            "macd_hist": round(macd_hist, 4),
-            "macd_cross": "bullish" if macd_hist > 0 and prev_macd_hist <= 0
-                          else "bearish" if macd_hist < 0 and prev_macd_hist >= 0
-                          else "neutral",
-            "bb_pct": round(bb_pct, 3),
-            "atr_pct": round(atr_pct, 3),
-            "vol_ratio": round(vol_ratio, 2),
-            "hist_vol": round(hist_vol, 3),
+            "symbol":        symbol,
+            "price":         float(close.iloc[-1]),
+            "ema9":          round(ema9_cur, 6),
+            "ema21":         round(ema21_cur, 6),
+            "ema_trend":     ema_trend,
+            "cross_bullish": cross_bullish,
+            "cross_bearish": cross_bearish,
+            "vwap":          round(vwap, 6),
+            "price_vs_vwap": round(price_vs_vwap, 3),
+            "rsi":           round(rsi, 2),
+            "macd_hist":     round(macd_hist, 6),
+            "macd_cross":    macd_cross,
+            "bb_pct":        round(bb_pct, 3),
+            "atr_pct":       round(atr_pct, 3),
+            "vol_ratio":     round(vol_ratio, 2),
+            "hist_vol":      round(hist_vol, 3),
             "avg_range_pct": round(avg_range, 3),
-            "trend": "bullish" if ema50 > ema200 else "bearish",
-            "funding_rate": round(funding_rate, 4),
+            "trend":         "bullish" if ema50 > ema200 else "bearish",
+            "funding_rate":  round(funding_rate, 4),
         }
 
     except Exception as e:
@@ -367,59 +400,77 @@ def analyze_altcoin(indicators: dict, market_data: dict, capital: float, open_po
     """
     from ai_client import call_ai, parse_json_response, is_available
 
-    rsi = indicators.get("rsi", 50)
-    bb_pct = indicators.get("bb_pct", 0.5)
-    macd_hist = indicators.get("macd_hist", 0)
-    macd_cross = indicators.get("macd_cross", "neutral")
-    vol_ratio = indicators.get("vol_ratio", 1)
-    atr_pct = indicators.get("atr_pct", 1)
-    trend = indicators.get("trend", "neutral")
-    funding = indicators.get("funding_rate", 0)
-    change_24h = market_data.get("change_24h", 0)
-    price = indicators.get("price", 0)
-    symbol = indicators.get("symbol", "")
+    rsi          = indicators.get("rsi", 50)
+    bb_pct       = indicators.get("bb_pct", 0.5)
+    macd_hist    = indicators.get("macd_hist", 0)
+    macd_cross   = indicators.get("macd_cross", "neutral")
+    vol_ratio    = indicators.get("vol_ratio", 1)
+    atr_pct      = indicators.get("atr_pct", 1)
+    trend        = indicators.get("trend", "neutral")
+    ema_trend    = indicators.get("ema_trend", "neutral")
+    cross_bull   = indicators.get("cross_bullish", False)
+    cross_bear   = indicators.get("cross_bearish", False)
+    price_vs_vwap = indicators.get("price_vs_vwap", 0)
+    funding      = indicators.get("funding_rate", 0)
+    change_24h   = market_data.get("change_24h", 0)
+    price        = indicators.get("price", 0)
+    symbol       = indicators.get("symbol", "")
 
     # Datos inválidos
-    if atr_pct < 0.1 or rsi != rsi or bb_pct != bb_pct:
+    if atr_pct < 0.05 or rsi != rsi or bb_pct != bb_pct:
         return None
 
-    # ── Paso 1: Scoring técnico rápido ──────────────────────────────────────
+    # ── Scoring: EMA cross + VWAP como señales primarias (estilo scalping) ──
     score = 0
     signals = []
 
-    if rsi < 25: score += 3; signals.append(f"RSI sobrevendido ({rsi:.0f})")
-    elif rsi < 35: score += 2; signals.append(f"RSI bajo ({rsi:.0f})")
-    elif rsi > 75: score -= 3; signals.append(f"RSI sobrecomprado ({rsi:.0f})")
-    elif rsi > 65: score -= 2; signals.append(f"RSI alto ({rsi:.0f})")
+    # ── Señales primarias (EMA 9/21 cross + VWAP) ───────────────────────────
+    if cross_bull:
+        score += 3; signals.append("EMA9 cruzó arriba EMA21 ↑")
+    elif ema_trend == "bullish":
+        score += 1; signals.append("EMA bullish")
 
-    if bb_pct < 0.1: score += 3; signals.append("BB lower band")
-    elif bb_pct < 0.2: score += 1; signals.append("BB cerca lower")
-    elif bb_pct > 0.9: score -= 3; signals.append("BB upper band")
-    elif bb_pct > 0.8: score -= 1; signals.append("BB cerca upper")
+    if cross_bear:
+        score -= 3; signals.append("EMA9 cruzó abajo EMA21 ↓")
+    elif ema_trend == "bearish":
+        score -= 1; signals.append("EMA bearish")
 
-    if macd_cross == "bullish": score += 2; signals.append("MACD bullish cross")
+    if price_vs_vwap > 0.1:
+        score += 1; signals.append(f"Sobre VWAP +{price_vs_vwap:.2f}%")
+    elif price_vs_vwap < -0.1:
+        score -= 1; signals.append(f"Bajo VWAP {price_vs_vwap:.2f}%")
+
+    # ── Señales confirmadoras ────────────────────────────────────────────────
+    if macd_cross == "bullish":   score += 2; signals.append("MACD bullish cross")
     elif macd_cross == "bearish": score -= 2; signals.append("MACD bearish cross")
-    elif macd_hist > 0: score += 1
-    elif macd_hist < 0: score -= 1
+    elif macd_hist > 0:           score += 1
+    elif macd_hist < 0:           score -= 1
 
-    if trend == "bullish": score += 1
-    elif trend == "bearish": score -= 1
+    # RSI — zona operativa (no sobreextendido)
+    if 35 <= rsi <= 55:   score += 1 if score > 0 else -1   # confirma dirección
+    elif rsi < 25:        score += 2; signals.append(f"RSI sobrevendido {rsi:.0f}")
+    elif rsi > 75:        score -= 2; signals.append(f"RSI sobrecomprado {rsi:.0f}")
+    elif rsi > 65 and score > 0:   score -= 1   # momentum LONG sobreextendido
+    elif rsi < 35 and score < 0:   score += 1   # momentum SHORT sobreextendido
 
-    if vol_ratio > 2:
-        score = int(score * 1.5)
-        signals.append(f"Vol alto ({vol_ratio:.1f}x)")
+    # Volumen confirma
+    if vol_ratio > 1.8:
+        score = int(score * 1.3); signals.append(f"Vol alto {vol_ratio:.1f}x")
 
-    if funding > 0.03: score -= 2; signals.append(f"Funding alto")
-    elif funding < -0.03: score += 2; signals.append("Funding negativo")
+    # Filtros de riesgo
+    if funding > 0.03:   score -= 1; signals.append("Funding alto")
+    elif funding < -0.03: score += 1; signals.append("Funding negativo")
 
-    if change_24h > 10: score -= 2; signals.append(f"Sobreextendido +{change_24h:.1f}%")
-    elif change_24h < -10: score += 2; signals.append(f"Caída extrema {change_24h:.1f}%")
+    # Evitar entrar en tendencias muy extendidas
+    if change_24h > 12:  score -= 2; signals.append(f"Sobreextendido +{change_24h:.1f}%")
+    elif change_24h < -12: score += 2; signals.append(f"Caída extrema {change_24h:.1f}%")
 
-    if open_longs > open_shorts + 2: score -= 1
-    elif open_shorts > open_longs + 2: score += 1
+    # Balance de posiciones
+    if open_longs > open_shorts + 1: score -= 1
+    elif open_shorts > open_longs + 1: score += 1
 
-    # Filtro: solo pasar a Claude si hay señal mínima
-    if abs(score) < 1:
+    # Necesita señal mínima de 2 (antes era 1 — más selectivo)
+    if abs(score) < 2:
         return None
 
     technical_direction = "LONG" if score > 0 else "SHORT"
@@ -428,41 +479,36 @@ def analyze_altcoin(indicators: dict, market_data: dict, capital: float, open_po
     # ── Paso 2: Claude confirma o descarta ───────────────────────────────────
     if not is_available():
         # Fallback a scoring puro si Claude no está disponible
-        if abs(score) >= 3: confidence = "HIGH"
-        elif abs(score) >= 1: confidence = "MEDIUM"
+        if abs(score) >= 4:   confidence = "HIGH"
+        elif abs(score) >= 2: confidence = "MEDIUM"
         else: return None
         direction = technical_direction
+        sl_pct = DEFAULT_SL_PCT
+        tp_pct = DEFAULT_TP_PCT
+        reasoning = f"Score {score:+d} | {' | '.join(signals[:3])}"
     else:
-        prompt = f"""Eres un trader experto en crypto futuros. Analizá esta altcoin y confirmá o descartá la señal técnica.
+        prompt = f"""Trader experto en crypto futuros, velas 5m. Confirmá o descartá la señal.
 
-ALTCOIN: {symbol}
-Precio: ${price:.6f}
-RSI(14): {rsi:.1f}
-MACD cross: {macd_cross} | Histograma: {macd_hist:.4f}
-Bollinger %B: {bb_pct:.2f}
-ATR volatilidad: {atr_pct:.2f}%
-Volumen relativo: {vol_ratio:.1f}x
-Tendencia EMA50/200: {trend}
-Funding rate: {funding:+.4f}%
-Cambio 24h: {change_24h:+.1f}%
+{symbol} | Precio: ${price:.6f} | Cambio 24h: {change_24h:+.1f}%
+EMA trend: {ema_trend} | Cross: {'↑ BULLISH' if cross_bull else '↓ BEARISH' if cross_bear else 'ninguno'}
+VWAP: {price_vs_vwap:+.2f}% | RSI: {rsi:.0f} | MACD: {macd_cross}
+Vol: {vol_ratio:.1f}x | ATR: {atr_pct:.2f}% | Funding: {funding:+.4f}%
 
-SEÑAL TÉCNICA: Score {score:+d} → sugiere {technical_direction}
-Señales: {', '.join(signals)}
+Score: {score:+d} → {technical_direction} | Señales: {', '.join(signals[:4])}
+Posiciones: {open_longs}L / {open_shorts}S abiertas
 
-Posiciones abiertas: {open_longs} LONG / {open_shorts} SHORT
-
-Confirmá si la señal tiene sentido o descartála. Respondé SOLO JSON:
+Respondé SOLO JSON (SL máx 2%, TP máx 4%):
 {{
   "direction": "{technical_direction}|SKIP",
   "confidence": "HIGH|MEDIUM|LOW",
-  "reasoning": "1 oración breve",
-  "stop_loss_pct": 0.025,
-  "take_profit_pct": 0.06
+  "reasoning": "1 oración",
+  "stop_loss_pct": 0.015,
+  "take_profit_pct": 0.030
 }}
-Solo SKIP si la señal es claramente incorrecta. Confiá en el score técnico."""
+SKIP solo si la señal es claramente inválida."""
 
         try:
-            raw = call_ai(prompt, max_tokens=200)
+            raw = call_ai(prompt, max_tokens=150)
             result = parse_json_response(raw)
             direction = result.get("direction", technical_direction)
             confidence = result.get("confidence", "MEDIUM")
@@ -470,30 +516,31 @@ Solo SKIP si la señal es claramente incorrecta. Confiá en el score técnico.""
                 log.info(f"    Claude descartó la señal")
                 return None
             reasoning = result.get("reasoning", f"Score {score:+d}")
-            sl_pct = float(result.get("stop_loss_pct", max(atr_pct * 1.5 / 100, 0.02)))
-            tp_pct = float(result.get("take_profit_pct", sl_pct * 2.5))
+            sl_pct = min(float(result.get("stop_loss_pct",  DEFAULT_SL_PCT)), 0.015)
+            tp_pct = min(float(result.get("take_profit_pct", DEFAULT_TP_PCT)), 0.03)
             log.info(f"    Claude confirma: {direction} | {confidence} | {reasoning}")
         except Exception as e:
             log.warning(f"    Error Claude: {e} — usando scoring técnico")
             direction = technical_direction
-            confidence = "MEDIUM" if abs(score) >= 2 else "LOW"
+            confidence = "MEDIUM" if abs(score) >= 3 else "LOW"
             if confidence == "LOW": return None
-            sl_pct = round(max(atr_pct * 1.5 / 100, 0.02), 4)
-            tp_pct = round(sl_pct * 2.5, 4)
-            reasoning = f"Score {score:+d} | {' | '.join(signals[:2])}"
+            sl_pct = DEFAULT_SL_PCT
+            tp_pct = DEFAULT_TP_PCT
+            reasoning = f"Score {score:+d} | {' | '.join(signals[:3])}"
 
-    # Estrategia
-    if rsi < 30 or rsi > 70 or bb_pct < 0.15 or bb_pct > 0.85:
+    # Estrategia basada en señal dominante
+    if cross_bull or cross_bear:
+        strategy = "EMA_CROSS"
+    elif rsi < 30 or rsi > 70:
         strategy = "MEAN_REVERSION"
     elif macd_cross in ("bullish", "bearish") and vol_ratio > 1.5:
         strategy = "MOMENTUM"
     else:
         strategy = "RANGE"
 
-    sl_pct = round(max(atr_pct * 1.5 / 100, 0.02), 4)
-    tp_pct = round(sl_pct * 2.5, 4)
-    max_position = min(capital * 0.20, TOTAL_CAPITAL / MAX_POSITIONS)
-    size = round(min(max_position * (1.0 if confidence == "HIGH" else 0.6), max_position), 2)
+    # Sizing: capital dividido en MAX_POSITIONS partes iguales
+    max_position = TOTAL_CAPITAL / MAX_POSITIONS
+    size = round(max_position * (1.0 if confidence == "HIGH" else 0.7), 2)
 
     return {
         "strategy": strategy,
@@ -564,32 +611,50 @@ def check_positions(client, state: dict):
     for symbol, pos in state["positions"].items():
         try:
             if DRY_RUN:
-                # Obtener precio actual
                 ticker = client.futures_ticker(symbol=symbol)
                 current_price = float(ticker["lastPrice"])
             else:
                 position_info = client.futures_position_information(symbol=symbol)
                 current_price = float(position_info[0]["markPrice"])
 
-            direction = pos["direction"]
+            # Sanity: price should not be zero or extremely low
             entry = pos["entry_price"]
+            if current_price <= 0 or current_price < entry * 0.01:
+                log.warning(f"  ⚠️  {symbol}: precio sospechoso ${current_price:.8f} (entrada ${entry:.8f}) — cierre de emergencia")
+                current_price = entry * 0.01  # cap pérdida al 99%
+
+            direction = pos["direction"]
             sl = pos["stop_loss"]
             tp = pos["take_profit"]
-            change = (current_price - entry) / entry
+
+            # Unrealized P&L at current price
+            raw_change = (current_price - entry) / entry
+            unrealized_pct = raw_change * LEVERAGE if direction == "LONG" else -raw_change * LEVERAGE
 
             hit_tp = (direction == "LONG" and current_price >= tp) or \
                      (direction == "SHORT" and current_price <= tp)
             hit_sl = (direction == "LONG" and current_price <= sl) or \
                      (direction == "SHORT" and current_price >= sl)
 
-            if hit_tp or hit_sl:
-                exit_reason = "TAKE_PROFIT" if hit_tp else "STOP_LOSS"
-                exit_price = tp if hit_tp else sl
+            # Emergency exit: unrealized loss > 20% of position (prevents gap/delist losses)
+            emergency = unrealized_pct < -0.20
+
+            if hit_tp or hit_sl or emergency:
+                if emergency and not hit_sl:
+                    exit_reason = "EMERGENCY_EXIT"
+                    exit_price = current_price
+                    log.warning(f"  🚨 EMERGENCY EXIT {symbol}: pérdida {unrealized_pct*100:.1f}% supera límite")
+                else:
+                    exit_reason = "TAKE_PROFIT" if hit_tp else "STOP_LOSS"
+                    exit_price = tp if hit_tp else sl
 
                 pnl_pct = (exit_price - entry) / entry * LEVERAGE
                 if direction == "SHORT":
                     pnl_pct = -pnl_pct
-                pnl = round(pos["size_usdt"] * pnl_pct, 2)
+
+                # Hard cap: can't lose more than position size
+                pnl = max(round(pos["size_usdt"] * pnl_pct, 2), -pos["size_usdt"])
+                pnl_pct = pnl / pos["size_usdt"]
 
                 trade = {**pos, "exit_price": exit_price, "exit_time": datetime.now().isoformat(),
                          "exit_reason": exit_reason, "pnl": pnl, "pnl_pct": round(pnl_pct*100, 2)}
@@ -598,10 +663,24 @@ def check_positions(client, state: dict):
                 state["total_pnl"] += pnl
                 to_close.append(symbol)
 
+                # Cooldown after SL/emergency: no re-entry for 2 min
+                if exit_reason in ("STOP_LOSS", "EMERGENCY_EXIT"):
+                    cooldown_until = (datetime.now() + timedelta(minutes=2)).isoformat()
+                    state.setdefault("cooldowns", {})[symbol] = cooldown_until
+                    log.info(f"  ⏱️  {symbol} en cooldown 60 min")
+
                 emoji = "✅" if pnl > 0 else "❌"
-                msg = f"{emoji} {exit_reason} {symbol} | exit ${exit_price:.4f} | P&L {'+' if pnl>=0 else ''}${pnl:.2f} ({pnl_pct*100:+.1f}%)"
+                msg = f"{emoji} {exit_reason} {symbol} | exit ${exit_price:.6f} | P&L {'+' if pnl>=0 else ''}${pnl:.2f} ({pnl_pct*100:+.1f}%)"
                 add_log(state, msg)
                 log.info(f"  [PAPER] {msg}")
+
+                # Log externo de estadísticas
+                try:
+                    _log_trade({**trade, "bot": "altcoins", "symbol": symbol,
+                                "size": trade.get("size_usdt", 0),
+                                "leverage": LEVERAGE})
+                except Exception:
+                    pass
 
         except Exception as e:
             log.warning(f"Error verificando {symbol}: {e}")
@@ -641,6 +720,11 @@ def run_cycle(client):
                     del state["positions"][sym]
                     add_log(state, f"🛑 MANUAL CLOSE {sym} @ ${price:.4f} | P&L {'+' if pnl>=0 else ''}${pnl:.2f}")
                     log.info(f"  ✅ {sym} cerrado manualmente")
+                    try:
+                        _log_trade({**trade, "bot": "altcoins", "symbol": sym,
+                                    "size": pos["size_usdt"], "leverage": LEVERAGE})
+                    except Exception:
+                        pass
                 except Exception as e:
                     log.error(f"Error cerrando {sym}: {e}")
         state["manual_close"] = []
@@ -665,7 +749,7 @@ def run_cycle(client):
         return
 
     # 3. Escanear mercado
-    altcoins = get_top_altcoins(client, n=20)
+    altcoins = get_top_altcoins(client, n=TOP_N)
     if not altcoins:
         save_state(state)
         return
@@ -683,15 +767,33 @@ def run_cycle(client):
     cooldowns = {s: t for s, t in cooldowns.items() if parse_dt(t) > now}
     state["cooldowns"] = cooldowns
 
+    # Blacklist dinámica: símbolos con WR < 40% después de ≥8 trades
+    sym_stats: dict[str, dict] = {}
+    for t in state.get("closed_trades", []):
+        s = t.get("symbol", "")
+        if not s:
+            continue
+        st = sym_stats.setdefault(s, {"wins": 0, "total": 0})
+        st["total"] += 1
+        if t.get("pnl", 0) > 0:
+            st["wins"] += 1
+    dynamic_blacklist = {
+        s for s, st in sym_stats.items()
+        if st["total"] >= 8 and (st["wins"] / st["total"]) < 0.40
+    }
+    if dynamic_blacklist:
+        log.info(f"  🚫 Blacklist dinámica ({len(dynamic_blacklist)}): {sorted(dynamic_blacklist)}")
+
     candidates = [
         a for a in altcoins
         if a["symbol"] not in state["positions"]
         and a["symbol"] not in cooldowns
+        and a["symbol"] not in dynamic_blacklist
     ]
     if len(candidates) < len(altcoins):
         skipped = [s for s in cooldowns]
         log.info(f"  En cooldown (cierre manual): {skipped}")
-    log.info(f"\nAnalizando {min(len(candidates), slots*3)} candidatos con Claude...")
+    log.info(f"\nAnalizando {min(len(candidates), slots*2)} candidatos (5m candles)...")
     state["scanning"] = True
     state["last_scan"] = []
     save_state(state)
@@ -700,7 +802,7 @@ def run_cycle(client):
     analyzed = 0
 
     for coin in candidates:
-        if analyzed >= slots * 3:  # analizar hasta 3x los slots disponibles
+        if analyzed >= slots * 2:  # analizar hasta 2x los slots disponibles
             break
 
         symbol = coin["symbol"]
@@ -709,7 +811,7 @@ def run_cycle(client):
             continue
 
         analyzed += 1
-        log.info(f"  {symbol}: RSI={indicators['rsi']:.0f} | BB={indicators['bb_pct']:.2f} | Vol={indicators['vol_ratio']:.1f}x | HistVol={indicators['hist_vol']:.2f}%")
+        log.info(f"  {symbol}: EMA={indicators['ema_trend']} cross={'↑' if indicators['cross_bullish'] else '↓' if indicators['cross_bearish'] else '-'} | VWAP{indicators['price_vs_vwap']:+.2f}% | RSI={indicators['rsi']:.0f} | Vol={indicators['vol_ratio']:.1f}x")
 
         # Contar longs y shorts abiertos para pasar al prompt
         open_longs = sum(1 for p in state["positions"].values() if p.get("direction") == "LONG")
@@ -768,6 +870,15 @@ def run_cycle(client):
         if capital < 20:
             log.warning("Capital insuficiente.")
             break
+        # Safety: recheck volume just before opening (avoid tokens that lost liquidity)
+        try:
+            fresh_ticker = client.futures_ticker(symbol=coin["symbol"])
+            fresh_vol = float(fresh_ticker.get("quoteVolume", 0))
+            if fresh_vol < MIN_VOLUME_USDT * 0.5:
+                log.warning(f"  ⚠️  {coin['symbol']}: volumen caído a ${fresh_vol/1e6:.1f}M — SKIP")
+                continue
+        except Exception:
+            pass
         open_position(client, state, coin["symbol"], analysis, indicators)
         open_count += 1
         executed += 1
@@ -778,10 +889,11 @@ def run_cycle(client):
 
 
 def run_forever():
-    log.info("🤖 Multi-Altcoin Adaptive Bot iniciado")
+    log.info("🤖 Multi-Altcoin Bot — estilo scalping (5m)")
     log.info(f"   Modo: {'DRY RUN' if DRY_RUN else '⚠️  REAL'}")
     log.info(f"   Capital: ${TOTAL_CAPITAL} | Leverage: {LEVERAGE}x | Max posiciones: {MAX_POSITIONS}")
-    log.info(f"   Intervalo: {INTERVAL_MINUTES} min")
+    log.info(f"   Candles: {CANDLE_INTERVAL} | SL: {DEFAULT_SL_PCT*100:.1f}% | TP: {DEFAULT_TP_PCT*100:.1f}%")
+    log.info(f"   Top {TOP_N} altcoins (>${MIN_VOLUME_USDT/1e6:.0f}M vol) | Ciclo: {INTERVAL_MINUTES} min")
 
     client = get_client()
 

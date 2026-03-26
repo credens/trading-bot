@@ -10,9 +10,12 @@ Uso:
 """
 
 import json
+import sys
 import logging
 from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+sys.path.insert(0, str(Path(__file__).parent))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -20,9 +23,10 @@ log = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).parent
 
 STATE_FILES = {
-    "binance": BASE_DIR / "paper_trading" / "binance_state.json",
+    "binance":  BASE_DIR / "paper_trading" / "binance_state.json",
     "altcoins": BASE_DIR / "altcoin_data" / "state.json",
     "rsi":      BASE_DIR / "rsi_bot_data" / "state.json",
+    "scalping": BASE_DIR / "paper_trading" / "scalping_state.json",
 }
 
 
@@ -45,8 +49,18 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, {})
 
     def do_GET(self):
+        parts = self.path.split("?")[0].strip("/").split("/")
+
+        # GET /stats  — estadísticas globales de todos los bots
+        if parts[0] == "stats" and len(parts) == 1:
+            try:
+                from trade_logger import generate_stats
+                self._send(200, generate_stats())
+            except Exception as e:
+                self._send(500, {"error": str(e)})
+            return
+
         # GET /state/binance  GET /state/altcoins  GET /state/rsi
-        parts = self.path.strip("/").split("/")
         if len(parts) == 2 and parts[0] == "state":
             bot = parts[1]
             path = STATE_FILES.get(bot)
@@ -63,7 +77,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         # POST /state/binance  body=JSON completo del estado
-        parts = self.path.strip("/").split("/")
+        parts = self.path.split("?")[0].strip("/").split("/")
         if len(parts) == 2 and parts[0] == "state":
             bot = parts[1]
             path = STATE_FILES.get(bot)

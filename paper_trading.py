@@ -20,6 +20,7 @@ STATE_DIR = Path("./paper_trading")
 STATE_DIR.mkdir(exist_ok=True)
 
 BINANCE_STATE  = STATE_DIR / "binance_state.json"
+SCALPING_STATE = STATE_DIR / "scalping_state.json"
 TRADING2_STATE = STATE_DIR / "trading2_state.json"
 
 
@@ -79,6 +80,8 @@ class PaperTradingEngine:
     def __init__(self, bot: str, initial_capital: float, state_file: Path):
         self.bot = bot
         self.state_file = state_file
+        self._total_wins = 0
+        self._total_closed = 0
         self.state = self._load_or_create(initial_capital)
 
     def _load_or_create(self, initial_capital: float) -> BotState:
@@ -106,7 +109,16 @@ class PaperTradingEngine:
                 all_closed = data.get("all_closed_trades", data.get("closed_trades", []))
                 state.open_trades = [Trade(**{k: v for k, v in t.items() if k in Trade.__dataclass_fields__}) for t in data.get("open_trades", [])]
                 state.closed_trades = [Trade(**{k: v for k, v in t.items() if k in Trade.__dataclass_fields__}) for t in all_closed]
-                log.info(f"[{self.bot}] Estado cargado: ${state.current_capital:.2f} | {len(state.open_trades)} abiertos | {len(state.closed_trades)} cerrados")
+                # Inicializar contadores históricos (para win_rate correcto tras truncamiento)
+                total_on_disk = data.get("total_trades", len(all_closed))
+                wr_on_disk    = data.get("win_rate", 0.0)
+                if total_on_disk > len(all_closed) and wr_on_disk > 0:
+                    self._total_closed = total_on_disk
+                    self._total_wins   = round(wr_on_disk / 100 * total_on_disk)
+                else:
+                    self._total_closed = len(all_closed)
+                    self._total_wins   = sum(1 for t in all_closed if (t.get("pnl") or 0) > 0)
+                log.info(f"[{self.bot}] Estado cargado: ${state.current_capital:.2f} | {len(state.open_trades)} abiertos | {len(state.closed_trades)} cerrados ({self._total_closed} hist)")
                 return state
             except Exception as e:
                 log.warning(f"Error cargando estado: {e} — creando nuevo")
@@ -124,11 +136,13 @@ class PaperTradingEngine:
         wins = [t for t in closed if t.pnl > 0]
         open_trades = self.state.open_trades
 
-        # Recalcular P&L desde trades reales
-        total_pnl = round(sum(t.pnl for t in closed), 2)
+        # Usar total_pnl del estado en memoria (actualizado por eventos de cierre),
+        # NO recalcular desde la lista truncada de trades que pierde el historial.
+        total_pnl = round(self.state.total_pnl, 2)
         reserved = sum(t.size for t in open_trades)
         current_capital = round(self.state.initial_capital - reserved + total_pnl, 2)
-        win_rate = round(len(wins)/len(closed)*100, 1) if closed else 0.0
+        # Win rate: usar el del estado (actualizado por close methods desde historial completo)
+        win_rate = self.state.win_rate
 
         # Formato compatible con el dashboard
         dashboard = {
@@ -143,8 +157,8 @@ class PaperTradingEngine:
             "open_trades": [asdict(t) for t in open_trades],
             "positions": {t.id: asdict(t) for t in open_trades},
             "closed_trades": [asdict(t) for t in closed[-30:]],
-            "all_closed_trades": [asdict(t) for t in closed],
-            "total_trades": len(closed),
+            "all_closed_trades": [asdict(t) for t in closed[-100:]],
+            "total_trades": self._total_closed,
             "btc_price": self.state.btc_price,
             "rsi": self.state.rsi,
             "trend": self.state.trend,
@@ -159,7 +173,7 @@ class PaperTradingEngine:
         try:
             if self.state_file.exists():
                 disk = json.loads(self.state_file.read_text())
-                disk_closed = disk.get("all_closed_trades", disk.get("closed_trades", []))
+                disk_closed = disk.get("all_closed_trades", disk.get("closed_trades", []))[-100:]
                 bot_closed = dashboard["all_closed_trades"]
                 if len(disk_closed) > len(bot_closed):
                     dashboard["all_closed_trades"] = disk_closed
@@ -286,10 +300,11 @@ class PaperTradingEngine:
         drawdown = (self.state.peak_capital - self.state.current_capital) / self.state.peak_capital * 100
         self.state.max_drawdown = max(self.state.max_drawdown, drawdown)
 
-        # Win rate
-        closed = [t for t in self.state.closed_trades if t.pnl is not None]
-        wins = [t for t in closed if t.pnl > 0]
-        self.state.win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0.0
+        # Win rate con contadores históricos (no se pierde en truncamiento)
+        self._total_closed += 1
+        if pnl > 0:
+            self._total_wins += 1
+        self.state.win_rate = round(self._total_wins / self._total_closed * 100, 1) if self._total_closed else 0.0
 
         emoji = "✅" if pnl > 0 else "❌"
         msg = f"{emoji} CERRADO {reason} | exit ${exit_price:,.0f} | P&L {'+' if pnl >= 0 else ''}{pnl:.2f} ({pnl_pct:+.1f}%)"
@@ -327,9 +342,8 @@ class PaperTradingEngine:
 
     def _recalc_stats(self):
         closed = [t for t in self.state.closed_trades if t.pnl is not None]
-        wins = [t for t in closed if t.pnl > 0]
-        self.state.win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0.0
-        self.state.total_pnl = round(sum(t.pnl for t in closed), 2)
+        self.state.win_rate = round(self._total_wins / self._total_closed * 100, 1) if self._total_closed else 0.0
+        self.state.total_pnl = round(sum(t.pnl for t in closed), 2)  # NOTE: solo in-memory, save() usa state.total_pnl
         self.state.total_pnl_pct = round((self.state.current_capital - self.state.initial_capital) / self.state.initial_capital * 100, 2)
         if self.state.current_capital > self.state.peak_capital:
             self.state.peak_capital = self.state.current_capital
@@ -349,6 +363,86 @@ class PaperTradingEngine:
 
 def get_binance_engine(initial_capital: float = 500.0) -> PaperTradingEngine:
     return PaperTradingEngine("binance", initial_capital, BINANCE_STATE)
+
+
+def get_scalping_engine(initial_capital: float = 500.0) -> "PaperTradingEngine":
+    """Crea engine de paper trading para el bot de scalping."""
+    engine = PaperTradingEngine("scalping", initial_capital, SCALPING_STATE)
+    # Agregar métodos específicos de scalping
+    return engine
+
+
+# Parchar PaperTradingEngine con métodos de scalping (para no crear subclase)
+def _open_scalping_trade(self, decision: dict, current_price: float, capital: float, leverage: int):
+    side = decision["decision"]
+    pos_pct = min(float(decision.get("position_size_pct", 0.08)), 0.10)
+    sl_pct  = float(decision.get("stop_loss_pct", 0.004))
+    tp_pct  = float(decision.get("take_profit_pct", 0.008))
+    size    = round(capital * pos_pct, 2)
+    ts = int(time.time())
+    from datetime import datetime as _dt
+    tid = f"SC-{_dt.now().strftime('%H%M%S')}"
+    if side == "LONG":
+        sl = round(current_price * (1 - sl_pct), 2)
+        tp = round(current_price * (1 + tp_pct), 2)
+    else:
+        sl = round(current_price * (1 + sl_pct), 2)
+        tp = round(current_price * (1 - tp_pct), 2)
+    trade = Trade(
+        id=tid, bot="scalping", side=side,
+        entry_price=current_price, entry_time=datetime.now().isoformat(),
+        size=size, stop_loss=sl, take_profit=tp,
+        reasoning=decision.get("reasoning", ""),
+        confidence=decision.get("confidence", ""),
+        leverage=leverage,
+    )
+    self.state.open_trades.append(trade)
+    self.state.current_capital -= size
+    self.state.trades_today += 1
+    self.save()
+    msg = f"✓ SCALP {side} | entrada ${current_price:,.0f} | SL ${sl:,.0f} | TP ${tp:,.0f} | size ${size:.0f}"
+    self.add_log(msg)
+    log.info(f"  [SCALP] {msg}")
+    return trade
+
+def _check_scalping_stops(self, current_price: float):
+    closed = []
+    for trade in self.state.open_trades:
+        if trade.bot != "scalping":
+            continue
+        hit_sl = hit_tp = False
+        if trade.side == "LONG":
+            hit_sl = current_price <= trade.stop_loss
+            hit_tp = current_price >= trade.take_profit
+        else:
+            hit_sl = current_price >= trade.stop_loss
+            hit_tp = current_price <= trade.take_profit
+        if hit_sl or hit_tp:
+            reason = "STOP_LOSS" if hit_sl else "TAKE_PROFIT"
+            self._close_binance_trade(trade, trade.stop_loss if hit_sl else trade.take_profit, reason)
+            closed.append(trade)
+    for t in closed:
+        self.state.open_trades.remove(t)
+    if closed:
+        self.save()
+
+def _get_scalping_position(self):
+    for t in self.state.open_trades:
+        if t.bot == "scalping":
+            return t
+    return None
+
+def _close_scalping_position(self, current_price: float, reason: str = "SIGNAL"):
+    for trade in list(self.state.open_trades):
+        if trade.bot == "scalping":
+            self._close_binance_trade(trade, current_price, reason)
+            self.state.open_trades.remove(trade)
+    self.save()
+
+PaperTradingEngine.open_scalping_trade   = _open_scalping_trade
+PaperTradingEngine.check_scalping_stops  = _check_scalping_stops
+PaperTradingEngine.get_scalping_position = _get_scalping_position
+PaperTradingEngine.close_scalping_position = _close_scalping_position
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -389,7 +483,15 @@ class Trading2Engine(PaperTradingEngine):
                 all_closed = data.get("all_closed_trades", data.get("closed_trades", []))
                 state.open_trades   = [Trade(**{k: v for k, v in t.items() if k in Trade.__dataclass_fields__}) for t in data.get("open_trades", [])]
                 state.closed_trades = [Trade(**{k: v for k, v in t.items() if k in Trade.__dataclass_fields__}) for t in all_closed]
-                log.info(f"[trading2] Estado cargado: ${state.current_capital:.2f} | {len(state.open_trades)} abiertos | {len(state.closed_trades)} cerrados")
+                total_on_disk = data.get("total_trades", len(all_closed))
+                wr_on_disk    = data.get("win_rate", 0.0)
+                if total_on_disk > len(all_closed) and wr_on_disk > 0:
+                    self._total_closed = total_on_disk
+                    self._total_wins   = round(wr_on_disk / 100 * total_on_disk)
+                else:
+                    self._total_closed = len(all_closed)
+                    self._total_wins   = sum(1 for t in all_closed if (t.get("pnl") or 0) > 0)
+                log.info(f"[trading2] Estado cargado: ${state.current_capital:.2f} | {len(state.open_trades)} abiertos | {len(state.closed_trades)} cerrados ({self._total_closed} hist)")
                 return state
             except Exception as e:
                 log.warning(f"[trading2] Error cargando estado: {e} — creando nuevo")
@@ -406,10 +508,10 @@ class Trading2Engine(PaperTradingEngine):
         wins       = [t for t in closed if t.pnl > 0]
         open_trades = self.state.open_trades
 
-        total_pnl       = round(sum(t.pnl for t in closed), 2)
+        total_pnl       = round(self.state.total_pnl, 2)
         reserved        = sum(t.size for t in open_trades)
         current_capital = round(self.state.initial_capital - reserved + total_pnl, 2)
-        win_rate        = round(len(wins) / len(closed) * 100, 1) if closed else 0.0
+        win_rate        = self.state.win_rate
 
         dashboard = {
             "bot":             "trading2",
@@ -423,8 +525,8 @@ class Trading2Engine(PaperTradingEngine):
             "open_trades":     [asdict(t) for t in open_trades],
             "positions":       {t.id: asdict(t) for t in open_trades},
             "closed_trades":   [asdict(t) for t in closed[-30:]],
-            "all_closed_trades": [asdict(t) for t in closed],
-            "total_trades":    len(closed),
+            "all_closed_trades": [asdict(t) for t in closed[-100:]],
+            "total_trades":    self._total_closed,
             "btc_price":       self.state.btc_price,
             "active_strategy": self.state.active_strategy,
             "last_vote":       self.state.last_vote,
@@ -436,7 +538,7 @@ class Trading2Engine(PaperTradingEngine):
         try:
             if self.state_file.exists():
                 disk = json.loads(self.state_file.read_text())
-                disk_closed = disk.get("all_closed_trades", disk.get("closed_trades", []))
+                disk_closed = disk.get("all_closed_trades", disk.get("closed_trades", []))[-100:]
                 bot_closed  = dashboard["all_closed_trades"]
                 if len(disk_closed) > len(bot_closed):
                     dashboard["all_closed_trades"] = disk_closed
@@ -557,9 +659,10 @@ class Trading2Engine(PaperTradingEngine):
         dd = (self.state.peak_capital - self.state.current_capital) / self.state.peak_capital * 100
         self.state.max_drawdown = max(self.state.max_drawdown, dd)
 
-        closed = [t for t in self.state.closed_trades if t.pnl is not None]
-        wins   = [t for t in closed if t.pnl > 0]
-        self.state.win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0.0
+        self._total_closed += 1
+        if pnl > 0:
+            self._total_wins += 1
+        self.state.win_rate = round(self._total_wins / self._total_closed * 100, 1) if self._total_closed else 0.0
 
         emoji = "✅" if pnl > 0 else "❌"
         msg   = f"{emoji} T2 CERRADO {reason} | ${exit_price:,.0f} | P&L {'+' if pnl >= 0 else ''}{pnl:.2f} ({pnl_pct:+.1f}%)"

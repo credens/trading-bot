@@ -73,7 +73,7 @@ def fetch_ohlcv(client, symbol: str = SYMBOL, interval: str = "15m", limit: int 
         "close_time", "quote_volume", "trades", "taker_buy_base",
         "taker_buy_quote", "ignore"
     ])
-    for col in ["open", "high", "low", "close", "volume"]:
+    for col in ["open", "high", "low", "close", "volume", "taker_buy_base", "taker_buy_quote"]:
         df[col] = df[col].astype(float)
     df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
     return df
@@ -877,7 +877,6 @@ def run_cycle(client, paper=None):
 
     # 1. Info de cuenta
     if DRY_RUN and paper:
-        paper.check_binance_stops(0)  # se actualiza con precio real abajo
         open_trade = paper.get_binance_position()
         capital = paper.state.current_capital + sum(t.size for t in paper.state.open_trades)
         current_position = open_trade.side if open_trade else "FLAT"
@@ -912,6 +911,20 @@ def run_cycle(client, paper=None):
 
     action = decision.get("decision", "FLAT")
     confidence = decision.get("confidence", "LOW")
+
+    # ── MACRO OVERRIDE: veto dirección contraria al macro 1h ──────────────────
+    macro = indicators.get("macro_trend", "neutral")
+    if action == "LONG" and macro == "bearish":
+        log.warning(f"  🚫 LONG vetado — macro 1h BEARISH ({indicators.get('macro_bear',0)} señales bajistas)")
+        action = "FLAT"
+        decision["decision"] = "FLAT"
+        decision["reasoning"] = f"LONG vetado por macro bearish 1h"
+    elif action == "SHORT" and macro == "bullish":
+        log.warning(f"  🚫 SHORT vetado — macro 1h BULLISH ({indicators.get('macro_bull',0)} señales alcistas)")
+        action = "FLAT"
+        decision["decision"] = "FLAT"
+        decision["reasoning"] = f"SHORT vetado por macro bullish 1h"
+
     log.info(f"Decisión: {action} | Confianza: {confidence}")
     log.info(f"  → {decision.get('reasoning', '')}")
 
@@ -942,7 +955,7 @@ def run_cycle(client, paper=None):
             if confidence == "LOW":
                 paper.add_log(f"LOW confidence — no entrando")
             else:
-                # Verificar cooldown post cierre manual
+                # Verificar cooldown post cierre manual y circuit breaker por dirección
                 try:
                     raw = _json.loads(BINANCE_STATE.read_text()) if BINANCE_STATE.exists() else {}
                     cooldown = raw.get("cooldown_until")
@@ -950,13 +963,40 @@ def run_cycle(client, paper=None):
                         log.info(f"  Cooldown activo hasta {cooldown[:16]} — no re-abriendo")
                         paper.add_log(f"Cooldown activo — esperando para re-abrir")
                     else:
-                        open_trade = paper.get_binance_position()
-                        if open_trade and open_trade.side != action:
-                            paper.close_binance_position(indicators["price"], "SIGNAL")
-                        if not paper.get_binance_position():
-                            # Pasar trend en decision para guardarlo
-                            decision["_trend"] = indicators.get("trend", "neutral")
-                            paper.open_binance_trade(decision, indicators["price"], capital, LEVERAGE)
+                        # Circuit breaker por dirección: bloquear si >= 2 SLs consecutivos en la misma dirección
+                        blocked_key = f"blocked_{action.lower()}_until"
+                        blocked_until = raw.get(blocked_key)
+                        if blocked_until and datetime.fromisoformat(blocked_until) > datetime.now():
+                            log.info(f"  Circuit breaker {action}: bloqueado hasta {blocked_until[:16]}")
+                            paper.add_log(f"Circuit breaker {action} — esperando enfriamiento")
+                        else:
+                            # Contar SLs consecutivos en esta dirección en últimas 2h
+                            from datetime import timedelta
+                            cutoff = datetime.now() - timedelta(hours=2)
+                            recent = [t for t in paper.state.closed_trades
+                                      if t.exit_time and datetime.fromisoformat(t.exit_time[:19]) > cutoff]
+                            # Consecutivos desde el último trade (mismo side, STOP_LOSS)
+                            consec_sl = 0
+                            for t in reversed(recent):
+                                if t.side == action and t.exit_reason == "STOP_LOSS":
+                                    consec_sl += 1
+                                else:
+                                    break
+                            total_sl_dir = sum(1 for t in recent if t.side == action and t.exit_reason == "STOP_LOSS")
+                            if consec_sl >= 2 or total_sl_dir >= 3:
+                                pause_min = 120 if total_sl_dir >= 3 else 45  # 2h o 45min
+                                pause_until = (datetime.now() + timedelta(minutes=pause_min)).isoformat()
+                                raw[blocked_key] = pause_until
+                                BINANCE_STATE.write_text(_json.dumps(raw, indent=2))
+                                log.warning(f"  ⛔ Circuit breaker {action}: {consec_sl} SLs consecutivos / {total_sl_dir} en 2h → bloqueado {pause_min}min")
+                                paper.add_log(f"Circuit breaker {action} activado — {pause_min}min de pausa")
+                            else:
+                                open_trade = paper.get_binance_position()
+                                if open_trade and open_trade.side != action:
+                                    paper.close_binance_position(indicators["price"], "SIGNAL")
+                                if not paper.get_binance_position():
+                                    decision["_trend"] = indicators.get("trend", "neutral")
+                                    paper.open_binance_trade(decision, indicators["price"], capital, LEVERAGE)
                 except Exception:
                     open_trade = paper.get_binance_position()
                     if open_trade and open_trade.side != action:

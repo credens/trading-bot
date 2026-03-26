@@ -1,13 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
 // ─── Mock fallback cuando no hay datos reales ──────────────────────────────
-const MOCK_SP500 = {
-  bot:"sp500", initial_capital:10000, current_capital:10000,
-  total_pnl:0, total_pnl_pct:0, win_rate:0, total_trades:0,
-  positions:{}, open_positions:[],
-  closed_trades:[], cycle_log:[{time:"--:--", msg:"Esperando apertura del mercado US (9:30AM ET)..."}],
-};
-
 const MOCK_ALT = {
   bot:"altcoins", initial_capital:500, current_capital:500,
   total_pnl:0, total_pnl_pct:0, win_rate:0, total_trades:0,
@@ -23,13 +16,11 @@ const MOCK_BN = {
   open_trades:[], closed_trades:[], cycle_log:[{time:"--:--", msg:"Esperando primer ciclo..."}],
 };
 
-const MOCK_T2 = {
-  bot:"trading2", initial_capital:500, current_capital:500,
-  total_pnl:0, total_pnl_pct:0, win_rate:0, total_trades:0,
-  active_strategy:"VOTE", btc_price:0,
-  open_trades:[], closed_trades:[],
-  last_vote:{ macd:"--", rsi_vwap:"--", cvd:"--", result:"--" },
-  cycle_log:[{time:"--:--", msg:"Esperando primer ciclo..."}],
+const MOCK_SC = {
+  bot:"scalping", initial_capital:500, current_capital:500, total_pnl:0,
+  total_pnl_pct:0, win_rate:0, max_drawdown:0,
+  btc_price:0, rsi:50, trend:"neutral",
+  open_trades:[], closed_trades:[], cycle_log:[{time:"--:--", msg:"Esperando primer ciclo..."}],
 };
 
 const Badge = ({ text, color }) => (
@@ -55,15 +46,16 @@ const PnlDisplay = ({ pnl, pct }) => {
 };
 
 // ─── BTC Candlestick Chart ─────────────────────────────────────────────────────
-function BTCChart({ entryPrice, side }) {
+function BTCChart({ entryPrice, side, defaultInterval = "1m" }) {
   const [candles, setCandles] = useState([]);
-  const [interval, setIntervalVal] = useState("1m");
-  const W = 560, H = 180, PAD = 8;
+  const [interval, setIntervalVal] = useState(defaultInterval);
+  const W = 560, H = 180, PAD = 8, YLAB = 40;
+  const RSI_H = 55, MACD_H = 55, TIME_H = 18;
 
   useEffect(() => {
     const load = async () => {
       try {
-        const r = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=${interval}&limit=60`);
+        const r = await fetch(`https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=${interval}&limit=80`);
         const data = await r.json();
         setCandles(data.map(k => ({
           o: parseFloat(k[1]), h: parseFloat(k[2]),
@@ -77,15 +69,45 @@ function BTCChart({ entryPrice, side }) {
     return () => clearInterval(t);
   }, [interval]);
 
-  if (!candles.length) return <div style={{ height:H, display:"flex", alignItems:"center", justifyContent:"center", color:"#ccc", fontSize:11 }}>Cargando gráfico...</div>;
+  if (!candles.length) return <div style={{ height: H + RSI_H + MACD_H, display:"flex", alignItems:"center", justifyContent:"center", color:"#ccc", fontSize:11 }}>Cargando gráfico...</div>;
 
+  // ── Candlestick geometry ─────────────────────────────────────────────────────
   const prices = candles.flatMap(c => [c.h, c.l]);
-  const minP = Math.min(...prices);
-  const maxP = Math.max(...prices);
+  const minP = Math.min(...prices), maxP = Math.max(...prices);
   const range = maxP - minP || 1;
   const toY = p => PAD + (1 - (p - minP) / range) * (H - PAD * 2);
-  const YLAB = 40; // width reserved for Y-axis labels
   const cW = (W - PAD - YLAB) / candles.length;
+
+  // ── RSI (14) ─────────────────────────────────────────────────────────────────
+  const closes = candles.map(c => c.c);
+  const rsiValues = (() => {
+    const vals = new Array(closes.length).fill(null);
+    if (closes.length < 15) return vals;
+    const diffs = closes.slice(1).map((c, i) => c - closes[i]);
+    let avgG = diffs.slice(0,14).filter(d=>d>0).reduce((a,b)=>a+b,0)/14;
+    let avgL = diffs.slice(0,14).filter(d=>d<0).map(d=>-d).reduce((a,b)=>a+b,0)/14;
+    vals[14] = avgL===0 ? 100 : 100-(100/(1+avgG/avgL));
+    for (let i=14; i<diffs.length; i++) {
+      const g = diffs[i]>0?diffs[i]:0, l = diffs[i]<0?-diffs[i]:0;
+      avgG = (avgG*13+g)/14; avgL = (avgL*13+l)/14;
+      vals[i+1] = avgL===0 ? 100 : 100-(100/(1+avgG/avgL));
+    }
+    return vals;
+  })();
+  const rsiY = v => v===null ? null : PAD + (1 - (v - 0) / 100) * (RSI_H - PAD * 2);
+
+  // ── MACD (12,26,9) ───────────────────────────────────────────────────────────
+  const ema = (arr, span) => arr.reduce((acc,v,i) => i===0 ? [v] : [...acc, v*(2/(span+1)) + acc[i-1]*(1-2/(span+1))], []);
+  const ema12 = ema(closes, 12), ema26 = ema(closes, 26);
+  const macdLine = ema12.map((v,i) => v - ema26[i]);
+  const signal = ema(macdLine, 9);
+  const histogram = macdLine.map((v,i) => v - signal[i]);
+  const macdMin = Math.min(...histogram), macdMax = Math.max(...histogram);
+  const macdRange = Math.max(Math.abs(macdMin), Math.abs(macdMax)) * 2 || 1;
+  const macdY = v => PAD + (1 - (v - (-macdRange/2)) / macdRange) * (MACD_H - PAD * 2);
+  const macdZeroY = macdY(0);
+
+  const xCenter = i => YLAB + i * cW + cW / 2;
 
   return (
     <div style={{ marginBottom:14 }}>
@@ -97,35 +119,28 @@ function BTCChart({ entryPrice, side }) {
           ${candles[candles.length-1]?.c.toLocaleString()}
         </span>
       </div>
-      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ background:"rgba(0,0,0,0.2)", borderRadius:8 }}>
-        {/* Grid lines + Y-axis price labels */}
-        {[0, 0.25, 0.5, 0.75, 1].map(f => {
-          const price = maxP - f * range;
-          const y = PAD + f * (H - PAD * 2);
+
+      {/* ── Candlestick ─────────────────────────────────────────────────────── */}
+      <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{ background:"rgba(0,0,0,0.2)", borderRadius:"8px 8px 0 0", display:"block" }}>
+        {[0,0.25,0.5,0.75,1].map(f => {
+          const price = maxP - f * range, y = PAD + f * (H - PAD * 2);
           return (
             <g key={f}>
               <line x1={PAD+36} y1={y} x2={W-PAD} y2={y} stroke="#ffffff08" strokeWidth="1" />
-              <text x={PAD+34} y={y+3} fill="#ccc" fontSize="8" textAnchor="end">{price >= 1000 ? `${(price/1000).toFixed(1)}k` : price.toFixed(0)}</text>
+              <text x={PAD+34} y={y+3} fill="#ccc" fontSize="8" textAnchor="end">{price>=1000?`${(price/1000).toFixed(1)}k`:price.toFixed(0)}</text>
             </g>
           );
         })}
-        {/* Entry price line */}
         {entryPrice && (
           <>
-            <line x1={PAD+36} y1={toY(entryPrice)} x2={W-PAD} y2={toY(entryPrice)}
-              stroke={side==="LONG"?"#00ff8866":"#ff444466"} strokeWidth="1" strokeDasharray="4,4" />
+            <line x1={PAD+36} y1={toY(entryPrice)} x2={W-PAD} y2={toY(entryPrice)} stroke={side==="LONG"?"#00ff8866":"#ff444466"} strokeWidth="1" strokeDasharray="4,4" />
             <text x={W-PAD-2} y={toY(entryPrice)-3} fill={side==="LONG"?"#00ff88":"#ff4444"} fontSize="8" textAnchor="end">entry</text>
           </>
         )}
-        {/* Candles */}
-        {candles.map((c, i) => {
-          const x = YLAB + i * cW + cW * 0.1;
-          const w = cW * 0.8;
-          const cx = YLAB + i * cW + cW / 2;
-          const bullish = c.c >= c.o;
-          const color = bullish ? "#00ff88" : "#ff4444";
-          const bodyTop = toY(Math.max(c.o, c.c));
-          const bodyH = Math.max(1, Math.abs(toY(c.o) - toY(c.c)));
+        {candles.map((c,i) => {
+          const x = YLAB + i*cW + cW*0.1, w = cW*0.8, cx = xCenter(i);
+          const bullish = c.c >= c.o, color = bullish?"#00ff88":"#ff4444";
+          const bodyTop = toY(Math.max(c.o,c.c)), bodyH = Math.max(1,Math.abs(toY(c.o)-toY(c.c)));
           return (
             <g key={i}>
               <line x1={cx} y1={toY(c.h)} x2={cx} y2={toY(c.l)} stroke={color} strokeWidth="0.8" opacity="0.7" />
@@ -134,8 +149,100 @@ function BTCChart({ entryPrice, side }) {
           );
         })}
       </svg>
+
+      {/* ── Time axis ───────────────────────────────────────────────────────── */}
+      <svg width="100%" viewBox={`0 0 ${W} ${TIME_H}`} style={{ background:"rgba(0,0,0,0.18)", display:"block" }}>
+        {candles.map((c, i) => {
+          const step = Math.max(1, Math.floor(candles.length / 6));
+          if (i % step !== 0) return null;
+          const d = new Date(c.t);
+          const label = `${d.getHours().toString().padStart(2,"0")}:${d.getMinutes().toString().padStart(2,"0")}`;
+          return (
+            <text key={i} x={xCenter(i)} y={TIME_H - 4} fill="#666" fontSize="7" textAnchor="middle">{label}</text>
+          );
+        })}
+      </svg>
+
+      {/* ── RSI ─────────────────────────────────────────────────────────────── */}
+      <svg width="100%" viewBox={`0 0 ${W} ${RSI_H}`} style={{ background:"rgba(0,0,0,0.15)", display:"block" }}>
+        <text x={PAD+34} y={PAD+8} fill="#888" fontSize="8" textAnchor="end">RSI</text>
+        {/* 70 / 30 levels */}
+        {[70,50,30].map(lvl => {
+          const y = rsiY(lvl);
+          return <line key={lvl} x1={YLAB} y1={y} x2={W-PAD} y2={y} stroke={lvl===50?"#ffffff10":lvl===70?"#ff444422":"#00ff8822"} strokeWidth={lvl===50?0.5:1} strokeDasharray={lvl===50?"":"3,3"} />;
+        })}
+        <text x={YLAB-2} y={rsiY(70)+3} fill="#ff4444" fontSize="7" textAnchor="end">70</text>
+        <text x={YLAB-2} y={rsiY(30)+3} fill="#00ff88" fontSize="7" textAnchor="end">30</text>
+        {/* RSI line */}
+        {rsiValues.map((v,i) => {
+          if (v===null || rsiValues[i-1]===null) return null;
+          const color = v>70?"#ff4444":v<30?"#00ff88":"#888bff";
+          return <line key={i} x1={xCenter(i-1)} y1={rsiY(rsiValues[i-1])} x2={xCenter(i)} y2={rsiY(v)} stroke={color} strokeWidth="1.2" opacity="0.9" />;
+        })}
+        {/* Current RSI value */}
+        {(() => { const last = rsiValues.filter(v=>v!==null).pop(); if(!last) return null;
+          const color = last>70?"#ff4444":last<30?"#00ff88":"#888bff";
+          return <text x={W-PAD} y={rsiY(last)+3} fill={color} fontSize="8" textAnchor="end">{last.toFixed(0)}</text>;
+        })()}
+      </svg>
+
+      {/* ── MACD ────────────────────────────────────────────────────────────── */}
+      <svg width="100%" viewBox={`0 0 ${W} ${MACD_H}`} style={{ background:"rgba(0,0,0,0.1)", borderRadius:"0 0 8px 8px", display:"block" }}>
+        <text x={PAD+34} y={PAD+8} fill="#888" fontSize="8" textAnchor="end">MACD</text>
+        {/* Zero line */}
+        <line x1={YLAB} y1={macdZeroY} x2={W-PAD} y2={macdZeroY} stroke="#ffffff15" strokeWidth="0.8" />
+        {/* Histogram bars */}
+        {histogram.map((v,i) => {
+          const y = macdY(v), h = Math.abs(macdZeroY - y) || 1;
+          const color = v>=0?"#00ff8866":"#ff444466";
+          return <rect key={i} x={YLAB+i*cW+cW*0.1} y={Math.min(y,macdZeroY)} width={cW*0.8} height={h} fill={color} />;
+        })}
+        {/* MACD line */}
+        {macdLine.map((v,i) => {
+          if (i===0) return null;
+          return <line key={i} x1={xCenter(i-1)} y1={macdY(macdLine[i-1])} x2={xCenter(i)} y2={macdY(v)} stroke="#ffb800" strokeWidth="1" opacity="0.9" />;
+        })}
+        {/* Signal line */}
+        {signal.map((v,i) => {
+          if (i===0) return null;
+          return <line key={i} x1={xCenter(i-1)} y1={macdY(signal[i-1])} x2={xCenter(i)} y2={macdY(v)} stroke="#ff88cc" strokeWidth="1" opacity="0.9" />;
+        })}
+        {/* Legend */}
+        <line x1={W-70} y1={MACD_H-8} x2={W-60} y2={MACD_H-8} stroke="#ffb800" strokeWidth="1.5" />
+        <text x={W-58} y={MACD_H-5} fill="#ffb800" fontSize="7">MACD</text>
+        <line x1={W-30} y1={MACD_H-8} x2={W-20} y2={MACD_H-8} stroke="#ff88cc" strokeWidth="1.5" />
+        <text x={W-18} y={MACD_H-5} fill="#ff88cc" fontSize="7">Sig</text>
+      </svg>
     </div>
   );
+}
+
+// ─── Bot Status Badge ──────────────────────────────────────────────────────────
+function BotStatus({ data, isScalping = false }) {
+  const now = new Date();
+  const parseUTC = s => { try { return new Date(s); } catch { return null; } };
+  const cbLong  = parseUTC(data.blocked_long_until);
+  const cbShort = parseUTC(data.blocked_short_until);
+  const cbUntil = [cbLong, cbShort].filter(d => d && d > now).sort((a,b)=>b-a)[0] || null;
+
+  const hasPosition = data.positions
+    ? Object.keys(data.positions).length > 0
+    : (data.open_trades||[]).length > 0;
+
+  const utcHour = now.getUTCHours();
+  const noSession = isScalping && utcHour >= 0 && utcHour < 6;
+
+  if (cbUntil) {
+    const mins = Math.round((cbUntil - now) / 60000);
+    return <span style={{ background:"rgba(255,68,68,0.15)", border:"1px solid #ff444455", color:"#ff4444", borderRadius:6, padding:"3px 8px", fontSize:10, fontFamily:"monospace", fontWeight:700 }}>⛔ CB {mins}min</span>;
+  }
+  if (noSession) {
+    return <span style={{ background:"rgba(150,150,150,0.1)", border:"1px solid #55555599", color:"#888", borderRadius:6, padding:"3px 8px", fontSize:10, fontFamily:"monospace" }}>🌙 SIN SESIÓN</span>;
+  }
+  if (hasPosition) {
+    return <span style={{ background:"rgba(0,255,136,0.1)", border:"1px solid #00ff8855", color:"#00ff88", borderRadius:6, padding:"3px 8px", fontSize:10, fontFamily:"monospace", fontWeight:700 }}>● OPERANDO</span>;
+  }
+  return <span style={{ background:"rgba(0,204,102,0.08)", border:"1px solid #00cc6633", color:"#00cc66", borderRadius:6, padding:"3px 8px", fontSize:10, fontFamily:"monospace" }}>● ACTIVO</span>;
 }
 
 // ─── Panel Binance ─────────────────────────────────────────────────────────────
@@ -211,10 +318,11 @@ function BinancePanel({ data, liveprices, onClose }) {
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
         <div>
           <div style={{ color:"#ffb800", fontWeight:700, letterSpacing:2, fontSize:13 }}>BINANCE FUTURES</div>
-          <div style={{ color:"#bbb", fontSize:11 }}>BTC/USDT · {data.leverage||3}x · paper trading</div>
+          <div style={{ color:"#bbb", fontSize:11 }}>BTC/USDT · {data.leverage||10}x · paper trading</div>
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
           {btcLive > 0 && <span style={{ color:"#ffb800", fontFamily:"monospace", fontWeight:700 }}>${btcLive.toLocaleString()}</span>}
+          <BotStatus data={data} />
           <Badge text="PAPER" color="#ffb800" />
         </div>
       </div>
@@ -291,7 +399,7 @@ function BinancePanel({ data, liveprices, onClose }) {
 
       {tab==="position" && (
         <div>
-          <BTCChart entryPrice={openTrade?.entry_price} side={openTrade?.side} />
+          <BTCChart entryPrice={openTrade?.entry_price} side={openTrade?.side} defaultInterval="15m" />
           {!openTrade && (
             <div style={{ color:"#ccc", textAlign:"center", padding:12, fontSize:12 }}>Sin posición — Claude esperando señal</div>
           )}
@@ -308,13 +416,19 @@ function BinancePanel({ data, liveprices, onClose }) {
           {closed.length===0
             ? <div style={{ color:"#bbb", textAlign:"center", padding:24 }}>Sin trades cerrados aún</div>
             : [...closed].reverse().slice(0,20).map((t,i)=>(
-              <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-                  <Badge text={t.side} color={t.side==="LONG"?"#00ff88":"#ff4444"} />
-                  <Badge text={t.exit_reason||"--"} color={t.exit_reason==="TAKE_PROFIT"?"#00ff88":t.exit_reason==="STOP_LOSS"?"#ff4444":"#bbb"} />
-                  <span style={{ color:"#bbb", fontSize:11 }}>${t.entry_price?.toLocaleString()} → ${t.exit_price?.toLocaleString()}</span>
+              <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"10px 14px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+                  <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                    <Badge text={t.side} color={t.side==="LONG"?"#00ff88":"#ff4444"} />
+                    <Badge text={t.exit_reason||"--"} color={t.exit_reason==="TAKE_PROFIT"?"#00ff88":t.exit_reason==="STOP_LOSS"?"#ff4444":"#bbb"} />
+                    <span style={{ color:"#bbb", fontSize:11 }}>${t.entry_price?.toLocaleString()} → ${t.exit_price?.toLocaleString()}</span>
+                  </div>
+                  <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontWeight:700 }}>{t.pnl>=0?"+":""}${t.pnl?.toFixed(2)}</span>
                 </div>
-                <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontWeight:700 }}>{t.pnl>=0?"+":""}${t.pnl?.toFixed(2)}</span>
+                <div style={{ display:"flex", gap:12, fontSize:10, color:"#888", fontFamily:"monospace" }}>
+                  {(t.exit_time||t.entry_time) && <span>{(t.exit_time||t.entry_time).slice(0,16).replace("T"," ")}</span>}
+                  {t.size && <span>size <span style={{ color:"#ffb800" }}>${t.size?.toFixed(2)}</span></span>}
+                </div>
               </div>
             ))
           }
@@ -545,196 +659,102 @@ function AltcoinPanel({ data, liveprices, onClose }) {
     </div>
   );
 }
-
-// ─── Panel SP500 ───────────────────────────────────────────────────────────────
-function SP500Panel({ data }) {
-  const [tab, setTab] = useState("positions");
-  const T = (id, label) => (
-    <button onClick={()=>setTab(id)} style={{ background:tab===id?"rgba(100,180,255,0.1)":"transparent", border:`1px solid ${tab===id?"#64b4ff55":"transparent"}`, color:tab===id?"#64b4ff":"#bbb", borderRadius:7, padding:"5px 14px", fontSize:11, cursor:"pointer", fontFamily:"monospace" }}>{label}</button>
-  );
-  const open = data.open_positions || [];
-  const closed = data.all_closed_trades || data.closed_trades || [];
-  const wins = closed.filter(t=>t.pnl>0);
-
-  return (
-    <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:16, padding:22 }}>
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
-        <div>
-          <div style={{ color:"#64b4ff", fontWeight:700, letterSpacing:2, fontSize:13 }}>RSI MEAN REVERSION — S&P500</div>
-          <div style={{ color:"#bbb", fontSize:11 }}>Alpaca paper trading · Mercado US</div>
-        </div>
-        <div style={{ display:"flex", gap:8 }}>
-          <Badge text="PAPER" color="#64b4ff" />
-          <Badge text="ALPACA" color="#bbb" />
-        </div>
-      </div>
-
-      <div style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
-        <Stat label="Capital" value={`$${(data.current_capital||0).toLocaleString()}`} />
-        <PnlDisplay pnl={data.total_pnl||0} pct={data.total_pnl_pct||0} />
-        <Stat label="Win Rate" value={`${(data.win_rate||0).toFixed(0)}%`} color="#ffcc00" />
-        <Stat label="Trades" value={data.total_trades||0} color="#64b4ff" size={20} />
-      </div>
-
-      <div style={{ display:"flex", gap:6, marginBottom:14 }}>{T("positions","POSICIONES")}{T("trades","TRADES")}{T("stats","STATS")}{T("log","LOG")}</div>
-
-      {tab==="positions" && (
-        <div>
-          {open.length===0
-            ? <div style={{ color:"#ccc", textAlign:"center", padding:20 }}>Sin posiciones — el bot opera al cierre del mercado US</div>
-            : open.map((p,i)=>(
-              <div key={i} style={{ background:"rgba(100,180,255,0.06)", border:"1px solid rgba(100,180,255,0.2)", borderRadius:10, padding:"12px 16px", marginBottom:8 }}>
-                <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                  <span style={{ color:"#64b4ff", fontWeight:700, fontFamily:"monospace" }}>{p.symbol}</span>
-                  <Badge text="LONG" color="#00ff88" />
-                  <span style={{ color:"#bbb", fontSize:12 }}>entrada ${p.entry_price?.toFixed(2)}</span>
-                </div>
-              </div>
-            ))
-          }
-        </div>
-      )}
-
-      {tab==="trades" && (
-        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-          {closed.length===0
-            ? <div style={{ color:"#ccc", textAlign:"center", padding:24 }}>Sin trades cerrados aún</div>
-            : [...closed].reverse().slice(0,12).map((t,i)=>(
-              <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                  <span style={{ color:"#64b4ff", fontFamily:"monospace", minWidth:60 }}>{t.symbol}</span>
-                  <Badge text={t.exit_reason||"CLOSE"} color={t.exit_reason==="TAKE_PROFIT"?"#00ff88":t.exit_reason==="STOP_LOSS"?"#ff4444":"#bbb"} />
-                  <span style={{ color:"#bbb", fontSize:11 }}>{t.date||t.exit_time?.slice(0,10)}</span>
-                </div>
-                <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontWeight:700 }}>{t.pnl>=0?"+":""}${t.pnl?.toFixed(2)}</span>
-              </div>
-            ))
-          }
-        </div>
-      )}
-
-      {tab==="stats" && (
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:10 }}>
-          {[
-            { label:"Capital inicial", value:`$${(data.initial_capital||0).toLocaleString()}` },
-            { label:"Capital actual", value:`$${(data.current_capital||0).toLocaleString()}` },
-            { label:"Retorno", value:`${(data.total_pnl_pct||0)>=0?"+":""}${(data.total_pnl_pct||0).toFixed(2)}%`, color:(data.total_pnl_pct||0)>=0?"#00ff88":"#ff4444" },
-            { label:"Win rate", value:`${(data.win_rate||0).toFixed(1)}%`, color:"#ffcc00" },
-            { label:"Total trades", value:data.total_trades||0 },
-            { label:"Ganadores", value:wins.length, color:"#00ff88" },
-            { label:"Perdedores", value:(data.total_trades||0)-wins.length, color:"#ff4444" },
-            { label:"Mejor trade", value:closed.length?`$${Math.max(...closed.map(t=>t.pnl||0)).toFixed(2)}`:"--", color:"#00ff88" },
-          ].map((s,i)=>(
-            <div key={i} style={{ background:"rgba(255,255,255,0.02)", borderRadius:8, padding:"10px 14px" }}>
-              <div style={{ color:"#bbb", fontSize:10, marginBottom:4 }}>{s.label}</div>
-              <div style={{ color:s.color||"#ccc", fontFamily:"monospace", fontWeight:700 }}>{s.value}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {tab==="log" && (
-        <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:8, padding:14, fontFamily:"monospace", fontSize:11 }}>
-          {(data.cycle_log||[]).slice(0,15).map((e,i)=>(
-            <div key={i} style={{ display:"flex", gap:10, marginBottom:5 }}>
-              <span style={{ color:"#bbb", minWidth:50 }}>{e.time}</span>
-              <span style={{ color:e.msg?.includes("✓")?"#00ff88":e.msg?.includes("❌")?"#ff4444":"#bbb" }}>{e.msg}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Panel Trading2 ───────────────────────────────────────────────────────────
-function Trading2Panel({ data, liveprices, onClose }) {
+// ─── Panel Scalping ───────────────────────────────────────────────────────────
+function ScalpingPanel({ data, liveprices, onClose }) {
   const [tab, setTab] = useState("position");
+  const [btcScan, setBtcScan] = useState(null);
+  const ACC = "#ff9933";
   const T = (id, label) => (
-    <button onClick={()=>setTab(id)} style={{ background:tab===id?"rgba(136,139,255,0.12)":"transparent", border:`1px solid ${tab===id?"#888bff55":"transparent"}`, color:tab===id?"#888bff":"#bbb", borderRadius:7, padding:"5px 14px", fontSize:11, cursor:"pointer", fontFamily:"monospace" }}>{label}</button>
+    <button onClick={()=>setTab(id)} style={{ background:tab===id?`rgba(255,153,51,0.1)`:"transparent", border:`1px solid ${tab===id?"#ff993355":"transparent"}`, color:tab===id?ACC:"#bbb", borderRadius:7, padding:"5px 14px", fontSize:11, cursor:"pointer", fontFamily:"monospace" }}>{label}</button>
   );
 
-  const openTrade = (data.open_trades||[]).find(t => t.bot==="trading2" || !t.bot) || null;
-  const closed    = data.closed_trades || [];
-  const wins      = closed.filter(t => t.pnl > 0);
+  const openTradeFromPositions = data.positions ? Object.values(data.positions)[0] : null;
+  const openTrade = openTradeFromPositions || (data.open_trades||[]).find(t => t.bot==="scalping" || (t.id||"").startsWith("SC-")) || null;
+  const closed    = data.all_closed_trades || (data.closed_trades||[]).filter(t => t.bot==="scalping" || (t.id||"").startsWith("SC-") || !t.bot);
+  const posColor  = openTrade?.side==="LONG" ? "#00ff88" : openTrade?.side==="SHORT" ? "#ff4444" : "#bbb";
   const btcLive   = liveprices?.["BTCUSDT"] || data.btc_price || 0;
-  const vote      = data.last_vote || {};
-  const activeStrat = data.active_strategy || "VOTE";
-
-  const posColor  = openTrade?.side==="LONG" ? "#00ff88" : openTrade?.side==="SHORT" ? "#ff4444" : "#888bff";
 
   const unrealizedRaw = openTrade && btcLive
     ? (openTrade.side==="LONG"
         ? (btcLive - openTrade.entry_price) / openTrade.entry_price
         : (openTrade.entry_price - btcLive) / openTrade.entry_price
-      ) * (openTrade.leverage || 3)
+      ) * (openTrade.leverage || 10)
     : null;
   const unrealizedPct = unrealizedRaw !== null ? (unrealizedRaw * 100).toFixed(2) : null;
   const unrealizedUsd = unrealizedRaw !== null ? (unrealizedRaw * (openTrade.size || 0)) : null;
 
-  // Colores por voto individual
-  const voteColor = v => v==="LONG"?"#00ff88":v==="SHORT"?"#ff4444":v==="FLAT"?"#555":"#888bff";
-  const stratLabel = s => ({ MACD:"MACD", RSI_VWAP:"RSI+VWAP", CVD:"CVD", VOTE:"VOTE" }[s] || s);
+  // Análisis técnico en vivo (1m)
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const r = await fetch("https://fapi.binance.com/fapi/v1/klines?symbol=BTCUSDT&interval=1m&limit=100");
+        const klines = await r.json();
+        if (!klines.length) return;
+        const closes = klines.map(k=>parseFloat(k[4]));
+        const vols   = klines.map(k=>parseFloat(k[5]));
+        const diffs  = closes.slice(1).map((c,i)=>c-closes[i]);
+        const gains  = diffs.map(d=>d>0?d:0), losses = diffs.map(d=>d<0?-d:0);
+        const avgGain = gains.slice(-14).reduce((a,b)=>a+b,0)/14;
+        const avgLoss = losses.slice(-14).reduce((a,b)=>a+b,0)/14;
+        const rsi  = avgLoss===0?100:100-(100/(1+avgGain/avgLoss));
+        const rsiV = rsi<30?"OVERSOLD":rsi>70?"OVERBOUGHT":"NEUTRAL";
+        const sma20 = closes.slice(-20).reduce((a,b)=>a+b,0)/20;
+        const std20 = Math.sqrt(closes.slice(-20).map(c=>(c-sma20)**2).reduce((a,b)=>a+b,0)/20);
+        const bbPct = (closes[closes.length-1]-(sma20-2*std20))/(4*std20);
+        const bbV   = bbPct<0.2?"LOWER":bbPct>0.8?"UPPER":"MIDDLE";
+        const ema   = (arr,span) => arr.reduce((acc,v,i)=>i===0?[v]:[...acc,v*(2/(span+1))+acc[i-1]*(1-2/(span+1))],[]);
+        const ema12 = ema(closes,12); const ema26 = ema(closes,26);
+        const macd  = ema12.map((v,i)=>v-ema26[i]);
+        const sig   = ema(macd,9);
+        const hist  = macd[macd.length-1]-sig[sig.length-1];
+        const prev  = macd[macd.length-2]-sig[sig.length-2];
+        const macdCross = hist>0&&prev<=0?"bullish":hist<0&&prev>=0?"bearish":"neutral";
+        const avgVol = vols.slice(-20).reduce((a,b)=>a+b,0)/20;
+        const volRatio = vols[vols.length-1]/avgVol;
+        const ema50 = ema(closes,50); const ema200 = ema(closes,200);
+        const trend = ema50[ema50.length-1]>ema200[ema200.length-1]?"bullish":"bearish";
+        let score=0, signals=[];
+        if(rsi<30){score+=3;signals.push("RSI oversold")} else if(rsi>70){score-=3;signals.push("RSI overbought")}
+        if(bbV==="LOWER"){score+=2;signals.push("BB lower")} else if(bbV==="UPPER"){score-=2;signals.push("BB upper")}
+        if(macdCross==="bullish"){score+=2;signals.push("MACD bullish")} else if(macdCross==="bearish"){score-=2;signals.push("MACD bearish")}
+        if(trend==="bullish")score+=1; else score-=1;
+        if(volRatio>2){score=Math.round(score*1.5);signals.push(`Vol ${volRatio.toFixed(1)}x`)}
+        setBtcScan({rsi:rsiV, bb:bbV, macdCross, trend, volRatio:parseFloat(volRatio.toFixed(2)), score, signals, price:closes[closes.length-1]});
+      } catch {}
+    };
+    load();
+    const t = setInterval(load, 15000);
+    return ()=>clearInterval(t);
+  }, []);
 
   return (
-    <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(136,139,255,0.15)", borderRadius:16, padding:22, minWidth:0, overflow:"hidden" }}>
-      {/* Header */}
+    <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,153,51,0.2)", borderRadius:16, padding:22, minWidth:0, overflow:"hidden" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
         <div>
-          <div style={{ color:"#888bff", fontWeight:700, letterSpacing:2, fontSize:13 }}>TRADING2 · 3 ESTRATEGIAS</div>
-          <div style={{ color:"#bbb", fontSize:11 }}>BTC/USDT · MACD · RSI+VWAP · CVD · modo {activeStrat}</div>
+          <div style={{ color:ACC, fontWeight:700, letterSpacing:2, fontSize:13 }}>SCALPING BTC</div>
+          <div style={{ color:"#bbb", fontSize:11 }}>BTC/USDT · {data.leverage||10}x · paper trading</div>
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-          {btcLive > 0 && <span style={{ color:"#888bff", fontFamily:"monospace", fontWeight:700 }}>${btcLive.toLocaleString()}</span>}
-          <Badge text="PAPER" color="#888bff" />
-          <Badge text={stratLabel(activeStrat)} color="#888bff" />
+          {btcLive > 0 && <span style={{ color:ACC, fontFamily:"monospace", fontWeight:700 }}>${btcLive.toLocaleString()}</span>}
+          <BotStatus data={data} isScalping={true} />
+          <Badge text="PAPER" color={ACC} />
         </div>
       </div>
 
-      {/* Stats row */}
       <div style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
-        <Stat label="Capital"   value={`$${(data.current_capital||0).toFixed(2)}`} />
+        <Stat label="Capital"  value={`$${(data.current_capital||0).toFixed(2)}`} />
         <PnlDisplay pnl={data.total_pnl||0} pct={data.total_pnl_pct||0} />
-        <Stat label="Win rate"  value={`${(data.win_rate||0).toFixed(0)}%`} color="#ffcc00" />
-        <Stat label="Trades"    value={data.total_trades||0} color="#888bff" size={20} />
+        <Stat label="RSI 1m"   value={data.rsi?.toFixed(1)||"--"} color={data.rsi<30?"#00ff88":data.rsi>70?"#ff4444":"#ccc"} />
+        <Stat label="Win rate" value={`${(data.win_rate||0).toFixed(0)}%`} color="#ffcc00" size={18} />
       </div>
 
-      {/* Voting panel (solo en modo VOTE) */}
-      {activeStrat === "VOTE" && (
-        <div style={{ background:"rgba(136,139,255,0.05)", border:"1px solid rgba(136,139,255,0.15)", borderRadius:10, padding:"10px 16px", marginBottom:14 }}>
-          <div style={{ color:"#888bff", fontSize:10, letterSpacing:1, marginBottom:8 }}>VOTACIÓN</div>
-          <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
-            {[
-              { label:"MACD",     key:"macd"    },
-              { label:"RSI+VWAP", key:"rsi_vwap"},
-              { label:"CVD",      key:"cvd"     },
-            ].map(({ label, key }) => (
-              <div key={key} style={{ textAlign:"center" }}>
-                <div style={{ color:"#bbb", fontSize:9, letterSpacing:1, marginBottom:3 }}>{label}</div>
-                <div style={{ background:voteColor(vote[key])+"22", border:`1px solid ${voteColor(vote[key])}44`, borderRadius:6, padding:"3px 10px", color:voteColor(vote[key]), fontWeight:700, fontSize:11, fontFamily:"monospace" }}>
-                  {vote[key] || "--"}
-                </div>
-              </div>
-            ))}
-            <div style={{ marginLeft:8, borderLeft:"1px solid rgba(255,255,255,0.08)", paddingLeft:12 }}>
-              <div style={{ color:"#bbb", fontSize:9, letterSpacing:1, marginBottom:3 }}>RESULTADO</div>
-              <div style={{ color:voteColor(vote.result), fontWeight:700, fontSize:14, fontFamily:"monospace" }}>
-                {vote.result || "--"}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Open trade */}
       {openTrade && (
         <div style={{ background:`${posColor}11`, border:`1px solid ${posColor}33`, borderRadius:10, padding:"12px 16px", marginBottom:14 }}>
           <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
             <div style={{ display:"flex", gap:8, alignItems:"center" }}>
               <Badge text={openTrade.side} color={posColor} />
               <span style={{ color:"#bbb", fontSize:12 }}>entrada ${openTrade.entry_price?.toLocaleString()}</span>
-              {openTrade._strategy && <Badge text={openTrade._strategy} color="#888bff" />}
-              <Badge text={openTrade.confidence} color={openTrade.confidence==="HIGH"?"#00ff88":"#ffcc00"} />
+              <Badge text={openTrade.confidence||"--"} color={openTrade.confidence==="HIGH"?"#00ff88":"#ffcc00"} />
             </div>
             <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
               {onClose && (
@@ -743,44 +763,61 @@ function Trading2Panel({ data, liveprices, onClose }) {
                 </button>
               )}
               {unrealizedPct && (() => {
-                const col  = parseFloat(unrealizedPct) >= 0 ? "#00ff88" : "#ff4444";
+                const col = parseFloat(unrealizedPct) >= 0 ? "#00ff88" : "#ff4444";
                 const sign = parseFloat(unrealizedPct) >= 0 ? "+" : "";
                 return (
                   <div style={{ textAlign:"right" }}>
                     <div style={{ color:col, fontWeight:700, fontSize:16, fontFamily:"monospace" }}>{sign}{unrealizedUsd.toFixed(2)}$</div>
-                    <div style={{ color:col+"aa", fontSize:12, fontFamily:"monospace" }}>{sign}{unrealizedPct}%</div>
+                    <div style={{ color:col+"aa", fontWeight:700, fontSize:12, fontFamily:"monospace" }}>{sign}{unrealizedPct}%</div>
                   </div>
                 );
               })()}
             </div>
           </div>
           <div style={{ display:"flex", gap:14, fontFamily:"monospace", fontSize:11 }}>
-            <span style={{ color:"#bbb" }}>size <span style={{ color:"#888bff" }}>${openTrade.size?.toFixed(2)}</span></span>
+            <span style={{ color:"#bbb" }}>size <span style={{ color:ACC }}>${openTrade.size?.toFixed(2)}</span></span>
             <span style={{ color:"#bbb" }}>SL <span style={{ color:"#ff4444" }}>${openTrade.stop_loss?.toLocaleString()}</span></span>
             <span style={{ color:"#bbb" }}>TP <span style={{ color:"#00ff88" }}>${openTrade.take_profit?.toLocaleString()}</span></span>
           </div>
-          {openTrade.reasoning && (
-            <div style={{ color:"#bbb", fontSize:11, marginTop:6 }}>{openTrade.reasoning?.slice(0, 90)}...</div>
-          )}
-        </div>
-      )}
-      {!openTrade && (
-        <div style={{ color:"#bbb", textAlign:"center", padding:"10px 0 14px", fontSize:12 }}>
-          Sin posición — esperando señal ({activeStrat})
+          {openTrade.reasoning && <div style={{ color:"#bbb", fontSize:11, marginTop:6 }}>{openTrade.reasoning?.slice(0,80)}...</div>}
         </div>
       )}
 
-      {/* Chart */}
-      <BTCChart entryPrice={openTrade?.entry_price} side={openTrade?.side} />
-
-      {/* Tabs */}
       <div style={{ display:"flex", gap:6, marginBottom:14, flexWrap:"wrap" }}>
-        {T("position","POSICIÓN")}{T("trades","TRADES")}{T("stats","STATS")}{T("log","LOG")}
+        <Badge text={`Trend: ${data.trend||"--"}`} color={data.trend==="bullish"?"#00ff88":data.trend==="bearish"?"#ff4444":"#bbb"} />
+        <Badge text={`MACD: ${data.macd_cross||"--"}`} color={data.macd_cross==="bullish"?"#00ff88":data.macd_cross==="bearish"?"#ff4444":"#bbb"} />
+        <Badge text={`Vol: ${data.vol_ratio?.toFixed(1)||"--"}x`} color={data.vol_ratio>1.5?"#ffcc00":"#bbb"} />
+        <Badge text={`Regime: ${data.regime||"--"}`} color={data.regime==="TREND"?ACC:"#bbb"} />
       </div>
 
-      {tab==="position" && !openTrade && (
-        <div style={{ color:"#bbb", textAlign:"center", padding:20, fontSize:12 }}>
-          Sin posición abierta
+      {btcScan && (
+        <div style={{ background:`rgba(255,153,51,0.04)`, border:`1px solid rgba(255,153,51,0.12)`, borderRadius:8, padding:"10px 14px", marginBottom:14 }}>
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center" }}>
+            <Badge text={`RSI: ${btcScan.rsi}`} color={btcScan.rsi==="OVERSOLD"?"#00ff88":btcScan.rsi==="OVERBOUGHT"?"#ff4444":"#bbb"} />
+            <Badge text={`BB: ${btcScan.bb}`} color={btcScan.bb==="LOWER"?"#00ff88":btcScan.bb==="UPPER"?"#ff4444":"#bbb"} />
+            <Badge text={`MACD: ${btcScan.macdCross}`} color={btcScan.macdCross==="bullish"?"#00ff88":btcScan.macdCross==="bearish"?"#ff4444":"#bbb"} />
+            <Badge text={btcScan.trend} color={btcScan.trend==="bullish"?"#00ff88":"#ff4444"} />
+            <Badge text={`Vol ${btcScan.volRatio}x`} color={btcScan.volRatio>2?"#ffcc00":"#bbb"} />
+            <span style={{ color:btcScan.score>=3?"#00ff88":btcScan.score<=-3?"#ff4444":"#bbb", fontFamily:"monospace", fontWeight:700, fontSize:12, marginLeft:4 }}>
+              Score: {btcScan.score>=0?"+":""}{btcScan.score}
+            </span>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display:"flex", gap:6, marginBottom:14 }}>{T("position","POSICIÓN")}{T("trades","TRADES")}{T("stats","STATS")}{T("log","LOG")}</div>
+
+      {tab==="position" && (
+        <div>
+          <BTCChart entryPrice={openTrade?.entry_price} side={openTrade?.side} defaultInterval="1m" />
+          {!openTrade && (
+            <div style={{ color:"#ccc", textAlign:"center", padding:12, fontSize:12 }}>Sin posición — esperando señal scalping</div>
+          )}
+          {openTrade && (
+            <div style={{ color:"#bbb", fontSize:12, textAlign:"center" }}>
+              Trade activo desde {openTrade.entry_time?.slice(0,16)?.replace("T"," ")}
+            </div>
+          )}
         </div>
       )}
 
@@ -789,14 +826,19 @@ function Trading2Panel({ data, liveprices, onClose }) {
           {closed.length === 0
             ? <div style={{ color:"#bbb", textAlign:"center", padding:24 }}>Sin trades cerrados aún</div>
             : [...closed].reverse().slice(0, 20).map((t, i) => (
-              <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-                  <Badge text={t.side} color={t.side==="LONG"?"#00ff88":"#ff4444"} />
-                  {t._strategy && <Badge text={t._strategy} color="#888bff" />}
-                  <Badge text={t.exit_reason||"--"} color={t.exit_reason==="TAKE_PROFIT"?"#00ff88":t.exit_reason==="STOP_LOSS"?"#ff4444":"#bbb"} />
-                  <span style={{ color:"#bbb", fontSize:11 }}>${t.entry_price?.toLocaleString()} → ${t.exit_price?.toLocaleString()}</span>
+              <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"10px 14px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+                  <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                    <Badge text={t.side} color={t.side==="LONG"?"#00ff88":"#ff4444"} />
+                    <Badge text={t.exit_reason||"--"} color={t.exit_reason==="TAKE_PROFIT"?"#00ff88":t.exit_reason==="STOP_LOSS"?"#ff4444":"#bbb"} />
+                    <span style={{ color:"#bbb", fontSize:11 }}>${t.entry_price?.toLocaleString()} → ${t.exit_price?.toLocaleString()}</span>
+                  </div>
+                  <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontWeight:700 }}>{t.pnl>=0?"+":""}${t.pnl?.toFixed(2)}</span>
                 </div>
-                <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontWeight:700 }}>{t.pnl>=0?"+":""}${t.pnl?.toFixed(2)}</span>
+                <div style={{ display:"flex", gap:12, fontSize:10, color:"#888", fontFamily:"monospace" }}>
+                  {(t.exit_time||t.entry_time) && <span>{(t.exit_time||t.entry_time).slice(0,16).replace("T"," ")}</span>}
+                  {t.size && <span>size <span style={{ color:ACC }}>${t.size?.toFixed(2)}</span></span>}
+                </div>
               </div>
             ))
           }
@@ -810,10 +852,8 @@ function Trading2Panel({ data, liveprices, onClose }) {
             { label:"Capital actual",  value:`$${(data.current_capital||0).toFixed(2)}` },
             { label:"P&L total",       value:`${(data.total_pnl||0)>=0?"+":""}$${Math.abs(data.total_pnl||0).toFixed(2)}`, color:(data.total_pnl||0)>=0?"#00ff88":"#ff4444" },
             { label:"Win rate",        value:`${(data.win_rate||0).toFixed(1)}%`, color:"#ffcc00" },
-            { label:"Total trades",    value:closed.length + (openTrade?1:0) },
-            { label:"Ganadores",       value:wins.length, color:"#00ff88" },
-            { label:"Perdedores",      value:(data.total_trades||0)-wins.length, color:"#ff4444" },
-            { label:"Mejor trade",     value:closed.length?`$${Math.max(...closed.map(t=>t.pnl||0)).toFixed(2)}`:"--", color:"#00ff88" },
+            { label:"Max drawdown",    value:`${(data.max_drawdown||0).toFixed(1)}%`, color:"#ff8c00" },
+            { label:"Trades totales",  value:data.total_trades||0 },
           ].map((s, i) => (
             <div key={i} style={{ background:"rgba(255,255,255,0.02)", borderRadius:8, padding:"10px 14px" }}>
               <div style={{ color:"#bbb", fontSize:10, marginBottom:4 }}>{s.label}</div>
@@ -828,7 +868,7 @@ function Trading2Panel({ data, liveprices, onClose }) {
           {(data.cycle_log||[]).slice(0, 20).map((e, i) => (
             <div key={i} style={{ display:"flex", gap:10, marginBottom:5 }}>
               <span style={{ color:"#bbb", minWidth:50 }}>{e.time}</span>
-              <span style={{ color:e.msg?.includes("✓")?"#00ff88":e.msg?.includes("❌")?"#ff4444":e.msg?.includes("VOTE")?"#888bff":"#bbb" }}>{e.msg}</span>
+              <span style={{ color:e.msg?.includes("✓")?"#00ff88":e.msg?.includes("❌")?"#ff4444":e.msg?.includes("SCALP")||e.msg?.includes("SC-")?ACC:"#bbb" }}>{e.msg}</span>
             </div>
           ))}
         </div>
@@ -838,7 +878,7 @@ function Trading2Panel({ data, liveprices, onClose }) {
 }
 
 // ─── localStorage helpers ──────────────────────────────────────────────────────
-const LS_KEY = { altcoins: "tbot_alt", binance: "tbot_bn", sp500: "tbot_sp500", trading2: "tbot_t2" };
+const LS_KEY = { altcoins: "tbot_alt", binance: "tbot_bn", scalping: "tbot_sc" };
 function lsLoad(key, fallback) {
   try { const v = localStorage.getItem(key); if (v) return JSON.parse(v); } catch {}
   return fallback;
@@ -850,9 +890,8 @@ function lsSave(key, data) {
 // ─── Dashboard Principal ───────────────────────────────────────────────────────
 export default function Dashboard() {
   const [bnData, setBnData]   = useState(() => lsLoad(LS_KEY.binance,   MOCK_BN));
+  const [scData, setScData]   = useState(() => lsLoad(LS_KEY.scalping,  MOCK_SC));
   const [altData, setAltData] = useState(() => lsLoad(LS_KEY.altcoins,  MOCK_ALT));
-  const [sp500Data, setSp500Data] = useState(() => lsLoad(LS_KEY.sp500, MOCK_SP500));
-  const [t2Data, setT2Data]   = useState(() => lsLoad(LS_KEY.trading2,  MOCK_T2));
   const [liveprices, setLivePrices] = useState({});
   const lastManualClose = useRef(0);
   const manuallyClosed = useRef(new Set());
@@ -883,10 +922,9 @@ export default function Dashboard() {
         if (d && !d.error) { lsSave(lsKey, d); setter(d); }
       } catch {}
     };
-    await load("altcoins", "/altcoin_data/state.json",          setAltData,  LS_KEY.altcoins);
-    await load("binance",  "/paper_trading/binance_state.json", setBnData,   LS_KEY.binance);
-    await load("sp500",    "/sp500_data/state.json",            setSp500Data,LS_KEY.sp500);
-    await load("trading2", "/trading2_data/state.json",         setT2Data,   LS_KEY.trading2);
+    await load("altcoins", "/altcoin_data/state.json",               setAltData,  LS_KEY.altcoins);
+    await load("binance",  "/paper_trading/binance_state.json",      setBnData,   LS_KEY.binance);
+    await load("scalping", "/paper_trading/scalping_state.json",     setScData,   LS_KEY.scalping);
     setLastFetch(new Date().toLocaleTimeString("es-AR"));
   }, [lastManualClose, manuallyClosed]);
 
@@ -920,14 +958,15 @@ export default function Dashboard() {
   }, [fetchLivePrices]);
 
   const closePosition = useCallback(async (bot, pos, lp=liveprices) => {
-    const symbol = pos.symbol || pos.id || (bot === "binance" ? "BTCUSDT" : "?");
+    const isBtcBot = bot === "binance" || bot === "scalping";
+    const symbol = pos.symbol || (isBtcBot ? "BTCUSDT" : pos.id) || "?";
     if (!confirm(`¿Cerrar posición de ${symbol} al precio actual?`)) return;
     try {
-      const botKey = bot === "binance" ? "binance" : "altcoins";
+      const botKey = bot === "binance" ? "binance" : bot === "scalping" ? "scalping" : "altcoins";
       const state = await fetch(`${LOCAL_API}/state/${botKey}?t=${Date.now()}`).then(r=>r.json());
       if (!pos) { alert("No se encontró la posición"); return; }
 
-      const sym = bot === "binance" ? "BTCUSDT" : symbol;
+      const sym = isBtcBot ? "BTCUSDT" : symbol;
       let exitPrice = lp?.[sym] || lp?.[symbol];
       if (!exitPrice) {
         try {
@@ -935,6 +974,7 @@ export default function Dashboard() {
           exitPrice = parseFloat(ticker.price) || 0;
         } catch { exitPrice = pos.entry_price || 0; }
       }
+      if (!exitPrice || exitPrice <= 0) exitPrice = pos.entry_price || 0;
 
       const leverage = pos.leverage || 3;
       const side = pos.side || pos.direction || "LONG";
@@ -950,7 +990,7 @@ export default function Dashboard() {
       const closedTradeId = pos.id || symbol;
       // Usar el estado del DASHBOARD (lo que se ve en pantalla) para filtrar posiciones,
       // no el del servidor que puede estar desactualizado o vacío por un restart del bot
-      const displayData = bot === "binance" ? bnData : altData;
+      const displayData = bot === "binance" ? bnData : bot === "scalping" ? scData : altData;
       const newOpenPositions = (displayData.open_positions||displayData.open_trades||[]).filter(p => p.symbol !== symbol && p.id !== closedTradeId);
       const newOpenTrades = (displayData.open_trades||[]).filter(t => t.id !== closedTradeId && t.symbol !== symbol);
       const newPositions = {...(displayData.positions||{})};
@@ -958,7 +998,7 @@ export default function Dashboard() {
       delete newPositions[closedTradeId];
 
       // Para closed trades usar el servidor (tiene el historial completo) o el display como fallback
-      const allClosed = [...(state.all_closed_trades || state.closed_trades || displayData.all_closed_trades || displayData.closed_trades || []), closedTrade];
+      const allClosed = [...(state.all_closed_trades || state.closed_trades || displayData.all_closed_trades || displayData.closed_trades || []), closedTrade].slice(-100);
       const totalPnl = parseFloat(allClosed.reduce((s,t) => s+(t.pnl||0), 0).toFixed(2));
       const wins = allClosed.filter(t => t.pnl > 0);
       const reservado = newOpenPositions.reduce((s,p) => s+(p.size||p.size_usdt||0), 0);
@@ -984,7 +1024,7 @@ export default function Dashboard() {
         last_updated: new Date().toISOString(),
       };
 
-      if (bot === "binance") setBnData(newState); else setAltData(newState);
+      if (bot === "binance") setBnData(newState); else if (bot === "scalping") setScData(newState); else setAltData(newState);
       lastManualClose.current = Date.now();
       manuallyClosed.current.add(symbol);
       if (closedTradeId) manuallyClosed.current.add(closedTradeId);
@@ -999,50 +1039,94 @@ export default function Dashboard() {
       } catch {}
 
     } catch(e) { console.error(e); alert("Error: " + e.message); }
-  }, [setBnData, setAltData, bnData, altData, lastManualClose, manuallyClosed, liveprices]);
+  }, [setBnData, setScData, setAltData, bnData, scData, altData, lastManualClose, manuallyClosed, liveprices]);
 
-  const totalPnl     = (bnData.total_pnl||0) + (altData.total_pnl||0) + (sp500Data.total_pnl||0) + (t2Data.total_pnl||0);
-  const totalCapital = (bnData.current_capital||0) + (altData.current_capital||0) + (sp500Data.current_capital||0) + (t2Data.current_capital||0);
+  const totalPnl     = (bnData.total_pnl||0) + (scData.total_pnl||0) + (altData.total_pnl||0);
+  const totalCapital = (bnData.current_capital||0) + (scData.current_capital||0) + (altData.current_capital||0);
 
   return (
     <div style={{ background:"#050508", minHeight:"100vh", color:"#ccc", fontFamily:"'Courier New', monospace", padding:"0 0 40px" }}>
-      <div style={{ borderBottom:"1px solid rgba(255,255,255,0.06)", padding:"14px 28px", display:"flex", alignItems:"center", justifyContent:"space-between", background:"rgba(255,255,255,0.01)" }}>
+      {/* Top bar */}
+      <div style={{ borderBottom:"1px solid rgba(255,255,255,0.06)", padding:"12px 28px", display:"flex", alignItems:"center", justifyContent:"space-between", background:"rgba(255,255,255,0.01)" }}>
         <div style={{ display:"flex", alignItems:"center", gap:12 }}>
           <div style={{ width:9, height:9, borderRadius:"50%", background:"#00ff88", boxShadow:"0 0 8px #00ff88", opacity:blink?1:0.2, transition:"opacity 0.3s" }} />
           <span style={{ color:"#00ff88", fontWeight:700, letterSpacing:3, fontSize:13 }}>TRADING BOT HQ</span>
           <span style={{ color:"#ccc", fontSize:11 }}>paper trading</span>
         </div>
-        <div style={{ display:"flex", gap:24, alignItems:"center" }}>
-          <div style={{ textAlign:"center" }}>
-            <div style={{ color:"#bbb", fontSize:10, marginBottom:2 }}>CAPITAL TOTAL</div>
-            <div style={{ color:"#ccc", fontFamily:"monospace", fontSize:15, fontWeight:700 }}>${totalCapital.toFixed(2)}</div>
-          </div>
-          <div style={{ textAlign:"center" }}>
-            <div style={{ color:"#bbb", fontSize:10, marginBottom:2 }}>P&L COMBINADO</div>
-            <div style={{ color:totalPnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontSize:15, fontWeight:700 }}>{totalPnl>=0?"+":""}${totalPnl.toFixed(2)}</div>
-          </div>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
           <div style={{ textAlign:"right", cursor:"pointer" }} onClick={fetchStates} title="Click para actualizar">
             <div style={{ color:"#bbb", fontSize:10, marginBottom:2 }}>ACTUALIZADO ↻</div>
             <div style={{ color:"#bbb", fontSize:11 }}>{lastFetch}</div>
           </div>
-          <span style={{ color:"#bbb", fontSize:11 }}>{time.toLocaleTimeString("es-AR")}</span>
+          <span style={{ color:"#bbb", fontSize:11, marginLeft:8 }}>{time.toLocaleTimeString("es-AR")}</span>
         </div>
       </div>
 
-      {/* Main grid: BTC left | Altcoins right */}
-      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, padding:"20px 28px" }}>
+      {/* P&L Summary bar */}
+      {(() => {
+        const bots = [
+          { label:"BINANCE", color:"#00d4ff", data:bnData },
+          { label:"SCALPING", color:"#ff9933", data:scData },
+          { label:"ALTCOINS", color:"#cc88ff", data:altData },
+        ];
+        return (
+          <div style={{ borderBottom:"1px solid rgba(255,255,255,0.06)", padding:"10px 28px", display:"flex", alignItems:"center", gap:0, background:"rgba(0,0,0,0.2)" }}>
+            {bots.map(({ label, color, data }, i) => {
+              const pnl = data.total_pnl || 0;
+              const cap = data.current_capital || 0;
+              const wr  = data.win_rate || 0;
+              const pos = pnl >= 0;
+              return (
+                <div key={label} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", padding:"4px 0", borderRight: i < 2 ? "1px solid rgba(255,255,255,0.06)" : "none" }}>
+                  <div style={{ color, fontSize:9, letterSpacing:2, fontWeight:700, marginBottom:4 }}>{label}</div>
+                  <div style={{ display:"flex", gap:14, alignItems:"center" }}>
+                    <div style={{ textAlign:"center" }}>
+                      <div style={{ color:"#bbb", fontSize:9, letterSpacing:1 }}>CAPITAL</div>
+                      <div style={{ color:"#ccc", fontFamily:"monospace", fontSize:13, fontWeight:700 }}>${cap.toFixed(0)}</div>
+                    </div>
+                    <div style={{ textAlign:"center" }}>
+                      <div style={{ color:"#bbb", fontSize:9, letterSpacing:1 }}>P&L</div>
+                      <div style={{ color:pos?"#00ff88":"#ff4444", fontFamily:"monospace", fontSize:13, fontWeight:700 }}>{pos?"+":""}${pnl.toFixed(0)}</div>
+                    </div>
+                    <div style={{ textAlign:"center" }}>
+                      <div style={{ color:"#bbb", fontSize:9, letterSpacing:1 }}>WR</div>
+                      <div style={{ color:"#ffcc00", fontFamily:"monospace", fontSize:13, fontWeight:700 }}>{wr.toFixed(0)}%</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+            {/* Total */}
+            <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", padding:"4px 0", borderLeft:"1px solid rgba(255,255,255,0.06)" }}>
+              <div style={{ color:"#00ff88", fontSize:9, letterSpacing:2, fontWeight:700, marginBottom:4 }}>TOTAL</div>
+              <div style={{ display:"flex", gap:14, alignItems:"center" }}>
+                <div style={{ textAlign:"center" }}>
+                  <div style={{ color:"#bbb", fontSize:9, letterSpacing:1 }}>CAPITAL</div>
+                  <div style={{ color:"#ccc", fontFamily:"monospace", fontSize:13, fontWeight:700 }}>${totalCapital.toFixed(0)}</div>
+                </div>
+                <div style={{ textAlign:"center" }}>
+                  <div style={{ color:"#bbb", fontSize:9, letterSpacing:1 }}>P&L</div>
+                  <div style={{ color:totalPnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontSize:15, fontWeight:700 }}>{totalPnl>=0?"+":""}${totalPnl.toFixed(0)}</div>
+                </div>
+                <div style={{ textAlign:"center" }}>
+                  <div style={{ color:"#bbb", fontSize:9, letterSpacing:1 }}>ROI</div>
+                  <div style={{ color:"#00ff88", fontFamily:"monospace", fontSize:13, fontWeight:700 }}>+{(totalPnl/1500*100).toFixed(0)}%</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Top row: Binance | Scalping */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, padding:"20px 28px 0" }}>
         <BinancePanel data={bnData} liveprices={liveprices} onClose={(pos)=>closePosition("binance", pos)} />
+        <ScalpingPanel data={scData} liveprices={liveprices} onClose={(pos)=>closePosition("scalping", pos)} />
+      </div>
+
+      {/* Altcoins full width below BTC bots */}
+      <div style={{ padding:"20px 28px 0" }}>
         <AltcoinPanel data={altData} liveprices={liveprices} onClose={(pos)=>closePosition("altcoin", pos)} />
-      </div>
-
-      {/* Trading2 full width below BTC/Alt */}
-      <div style={{ padding:"0 28px 20px" }}>
-        <Trading2Panel data={t2Data} liveprices={liveprices} onClose={(pos)=>closePosition("binance", pos)} />
-      </div>
-
-      {/* SP500 full width below */}
-      <div style={{ padding:"0 28px 20px" }}>
-        <SP500Panel data={sp500Data} />
       </div>
 
       <div style={{ margin:"0 28px", padding:"12px 18px", background:"rgba(0,255,136,0.03)", border:"1px solid rgba(0,255,136,0.1)", borderRadius:10, fontSize:11, color:"#ccc" }}>
