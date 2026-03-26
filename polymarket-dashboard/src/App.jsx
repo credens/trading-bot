@@ -229,15 +229,9 @@ function BotStatus({ data, isScalping = false }) {
     ? Object.keys(data.positions).length > 0
     : (data.open_trades||[]).length > 0;
 
-  const utcHour = now.getUTCHours();
-  const noSession = isScalping && utcHour >= 0 && utcHour < 6;
-
   if (cbUntil) {
     const mins = Math.round((cbUntil - now) / 60000);
     return <span style={{ background:"rgba(255,68,68,0.15)", border:"1px solid #ff444455", color:"#ff4444", borderRadius:6, padding:"3px 8px", fontSize:10, fontFamily:"monospace", fontWeight:700 }}>⛔ CB {mins}min</span>;
-  }
-  if (noSession) {
-    return <span style={{ background:"rgba(150,150,150,0.1)", border:"1px solid #55555599", color:"#888", borderRadius:6, padding:"3px 8px", fontSize:10, fontFamily:"monospace" }}>🌙 SIN SESIÓN</span>;
   }
   if (hasPosition) {
     return <span style={{ background:"rgba(0,255,136,0.1)", border:"1px solid #00ff8855", color:"#00ff88", borderRadius:6, padding:"3px 8px", fontSize:10, fontFamily:"monospace", fontWeight:700 }}>● OPERANDO</span>;
