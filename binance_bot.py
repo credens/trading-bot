@@ -694,11 +694,15 @@ def run_strategies(client, current_position: str, capital: float) -> dict:
     # Calcular macro 1h para votación asimétrica
     try:
         df1h = fetch_ohlcv(client, interval="1h", limit=220)
-        ema50_1h = df1h["close"].ewm(span=50, adjust=False).mean().iloc[-1]
-        ema200_1h = df1h["close"].ewm(span=200, adjust=False).mean().iloc[-1]
+        ema50_1h = float(df1h["close"].ewm(span=50, adjust=False).mean().iloc[-1])
+        ema200_1h = float(df1h["close"].ewm(span=200, adjust=False).mean().iloc[-1])
+        macro_gap = (ema200_1h - ema50_1h) / ema200_1h * 100  # positivo = bearish
         macro_1h = "bearish" if ema50_1h < ema200_1h else "bullish"
+        macro_strong = macro_gap > 0.4  # EMA50 más de 0.4% por debajo de EMA200
     except Exception:
-        macro_1h = "neutral"
+        macro_1h = "neutral"; macro_gap = 0; macro_strong = False
+
+    log.info(f"  Macro gap: {macro_gap:+.3f}% ({'FUERTE' if macro_strong else 'moderado'} {macro_1h})")
 
     price = r1["entry_price"]
     sl_pct = max(r["stop_loss_pct"] for r in [r1, r2, r3])
@@ -707,13 +711,27 @@ def run_strategies(client, current_position: str, capital: float) -> dict:
     for r in [r1, r2, r3]:
         all_signals.extend(r.get("key_signals", [])[:2])
 
-    # LONG: siempre 3/3
+    # LONG: siempre 3/3 (conservador en downtrend)
     if long_v == 3:
         return {"decision": "LONG", "confidence": "HIGH",
                 "reasoning": f"Unanimidad 3/3 LONG", "key_signals": all_signals,
                 "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
                 "position_size_pct": 0.10}
-    # SHORT: 2/3 si macro bearish, 3/3 si bullish
+
+    # SHORT threshold según fuerza del macro:
+    #   macro fuerte bearish (gap > 0.4%): 1/3 basta si HIGH confidence
+    #   macro bearish moderado: 2/3
+    #   macro bullish: 3/3
+    if macro_strong and short_v >= 1:
+        # Solo aceptar si la estrategia que vota SHORT tiene HIGH confidence
+        short_rs = [r for r in [r1, r2, r3] if r["decision"] == "SHORT"]
+        if short_rs and short_rs[0].get("confidence") == "HIGH":
+            log.info(f"  SHORT 1/3 HIGH — macro fuerte bearish ({macro_gap:+.2f}%)")
+            return {"decision": "SHORT", "confidence": "MEDIUM",
+                    "reasoning": f"SHORT 1/3 HIGH — macro fuerte {macro_gap:+.2f}%", "key_signals": all_signals,
+                    "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
+                    "position_size_pct": 0.07}
+
     short_threshold = 2 if macro_1h == "bearish" else 3
     if short_v >= short_threshold:
         conf = "HIGH" if short_v == 3 else "MEDIUM"

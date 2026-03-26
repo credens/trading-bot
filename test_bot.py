@@ -393,8 +393,11 @@ def run_cycle(client, paper: PaperTradingEngine):
         paper.save()
         log.info(f"  ○ CERRADO por señal @ ${price:,.2f}")
 
-    paper.save()
     s = paper.state
+    # Siempre loguear estado del ciclo para que el dashboard se actualice
+    pos_str = f"FLAT" if not s.open_trades else f"{s.open_trades[0].side} @ ${s.open_trades[0].entry_price:,.0f}"
+    paper.add_log(f"FLAT — {action} | BTC ${decision['entry_price']:,.0f} | {pos_str}")
+    paper.save()
     log.info(f"  [PAPER] Capital: ${s.current_capital:.2f} | P&L: {s.total_pnl:+.2f} | Win: {s.win_rate:.0f}%")
 
 

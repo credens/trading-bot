@@ -1201,7 +1201,10 @@ export default function Dashboard() {
 
       // Para closed trades usar el servidor (tiene el historial completo) o el display como fallback
       const allClosed = [...(state.all_closed_trades || state.closed_trades || displayData.all_closed_trades || displayData.closed_trades || []), closedTrade].slice(-100);
-      const totalPnl = parseFloat(allClosed.reduce((s,t) => s+(t.pnl||0), 0).toFixed(2));
+      // IMPORTANTE: NO recalcular total_pnl sumando solo los trades en disco (son pocos y destruye el histórico).
+      // Usar el total acumulado del estado + el P&L de esta operación.
+      const prevTotalPnl = displayData.total_pnl || state.total_pnl || 0;
+      const totalPnl = parseFloat((prevTotalPnl + pnl).toFixed(2));
       const wins = allClosed.filter(t => t.pnl > 0);
       const reservado = newOpenPositions.reduce((s,p) => s+(p.size||p.size_usdt||0), 0);
       const capital = parseFloat(((state.initial_capital||500) - reservado + totalPnl).toFixed(2));
@@ -1216,8 +1219,14 @@ export default function Dashboard() {
         total_pnl: totalPnl, total_pnl_raw: totalPnl,
         total_pnl_pct: parseFloat((totalPnl/(state.initial_capital||500)*100).toFixed(2)),
         current_capital: capital, capital,
-        win_rate: allClosed.length ? parseFloat((wins.length/allClosed.length*100).toFixed(1)) : 0,
-        total_trades: allClosed.length,
+        win_rate: (() => {
+          const prevTrades = displayData.total_trades || state.total_trades || allClosed.length;
+          const prevWinRate = displayData.win_rate || state.win_rate || 0;
+          const prevWins = Math.round(prevWinRate / 100 * prevTrades);
+          const newTotal = prevTrades + 1;
+          return parseFloat(((prevWins + (pnl > 0 ? 1 : 0)) / newTotal * 100).toFixed(1));
+        })(),
+        total_trades: (displayData.total_trades || state.total_trades || allClosed.length) + 1,
         cycle_log: [{ time: new Date().toLocaleTimeString("es-AR"),
           msg: `🛑 MANUAL ${symbol} @ $${exitPrice.toFixed(2)} | P&L ${pnl>=0?"+":""}$${pnl.toFixed(2)}` },
           ...(state.cycle_log||[]).slice(0,49)],

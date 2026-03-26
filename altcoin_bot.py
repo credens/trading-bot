@@ -139,8 +139,8 @@ def get_indicators(client, symbol: str) -> Optional[dict]:
 
         # VWAP (sesión — últimas 78 velas de 5m ≈ 6.5h de mercado)
         typ_price = (high + low + close) / 3
-        vwap = float((typ_price * volume).rolling(78).sum().iloc[-1] /
-                     volume.rolling(78).sum().iloc[-1])
+        vol_sum = volume.rolling(78).sum().iloc[-1]
+        vwap = float((typ_price * volume).rolling(78).sum().iloc[-1] / vol_sum) if vol_sum > 0 else float(close.iloc[-1])
         price_vs_vwap = (float(close.iloc[-1]) - vwap) / vwap * 100  # % sobre/bajo VWAP
 
         # RSI 14
@@ -169,7 +169,8 @@ def get_indicators(client, symbol: str) -> Optional[dict]:
         atr_pct = float(tr.rolling(14).mean().iloc[-1] / close.iloc[-1] * 100)
 
         # Volumen relativo
-        vol_ratio = float(volume.iloc[-1] / volume.rolling(20).mean().iloc[-1])
+        vol_mean = volume.rolling(20).mean().iloc[-1]
+        vol_ratio = float(volume.iloc[-1] / vol_mean) if vol_mean > 0 else 1.0
 
         # Volatilidad histórica
         returns   = close.pct_change().dropna()
