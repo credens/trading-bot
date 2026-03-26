@@ -1231,7 +1231,7 @@ export default function Dashboard() {
           msg: `🛑 MANUAL ${symbol} @ $${exitPrice.toFixed(2)} | P&L ${pnl>=0?"+":""}$${pnl.toFixed(2)}` },
           ...(state.cycle_log||[]).slice(0,49)],
         manual_close: bot === "binance" ? true : [symbol],
-        cooldowns: { ...(state.cooldowns||{}), [symbol]: new Date(Date.now()+2*60*60*1000).toISOString() },
+        cooldowns: { ...(state.cooldowns||{}), [symbol]: new Date(Date.now()+20*60*1000).toISOString() },
         last_updated: new Date().toISOString(),
       };
 

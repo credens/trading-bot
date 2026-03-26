@@ -72,12 +72,13 @@ BN_PID=$!
 echo $BN_PID > "$SCRIPT_DIR/.binance.pid"
 echo "✓ Binance bot iniciado (PID: $BN_PID)"
 
-# ─── Lanzar Trading2 Bot ─────────────────────────────────────────────────────
-echo "Iniciando Trading2 bot (MACD + RSI+VWAP + CVD)..."
-nohup python3 trading2.py >> "$LOG_FILE" 2>&1 &
-T2_PID=$!
-echo $T2_PID > "$SCRIPT_DIR/.trading2.pid"
-echo "✓ Trading2 bot iniciado (PID: $T2_PID)"
+
+# ─── Lanzar Scalping Bot ─────────────────────────────────────────────────────
+echo "Iniciando Scalping BTC 1m bot..."
+nohup python3.14 scalping_bot.py >> "$LOG_FILE" 2>&1 &
+SC_PID=$!
+echo $SC_PID > "$SCRIPT_DIR/.scalping.pid"
+echo "✓ Scalping bot iniciado (PID: $SC_PID)"
 
 # ─── Lanzar Altcoin Bot ──────────────────────────────────────────────────────
 echo "Iniciando Multi-Altcoin bot..."
@@ -162,8 +163,6 @@ if [ "$HAS_NODE" = true ]; then
     mkdir -p "$DASHBOARD_DIR/public/paper_trading"
     # Symlinks para que Vite sirva los JSON del paper trading
     ln -sf "$BOT_DIR/paper_trading/binance_state.json"  "$DASHBOARD_DIR/public/paper_trading/binance_state.json"  2>/dev/null
-    ln -sf "$BOT_DIR/paper_trading/trading2_state.json" "$DASHBOARD_DIR/public/trading2_data/state.json"          2>/dev/null
-    mkdir -p "$DASHBOARD_DIR/public/trading2_data"
     mkdir -p "$DASHBOARD_DIR/public/rsi_bot_data"
     ln -sf "$BOT_DIR/rsi_bot_data/state.json"  "$DASHBOARD_DIR/public/rsi_bot_data/state.json"  2>/dev/null
         mkdir -p "$DASHBOARD_DIR/public/altcoin_data"

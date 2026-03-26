@@ -608,13 +608,18 @@ def open_position(client, state: dict, symbol: str, analysis: dict, indicators: 
 
 
 def get_btc_macro(client) -> str:
-    """BTC 1h macro trend: bullish / bearish. Usado para filtrar entradas."""
+    """BTC 1h macro trend: bullish / bearish / soft_bearish / soft_bullish.
+    Solo bloquea entradas en tendencias fuertes (gap > 1.5%)."""
     try:
         klines = client.futures_klines(symbol="BTCUSDT", interval="1h", limit=210)
         closes = pd.Series([float(k[4]) for k in klines])
         ema50  = closes.ewm(span=50,  adjust=False).mean().iloc[-1]
         ema200 = closes.ewm(span=200, adjust=False).mean().iloc[-1]
-        return "bullish" if ema50 > ema200 else "bearish"
+        gap_pct = abs(ema50 - ema200) / ema200 * 100
+        if ema50 > ema200:
+            return "bullish" if gap_pct > 1.5 else "soft_bullish"
+        else:
+            return "bearish" if gap_pct > 1.5 else "soft_bearish"
     except Exception:
         return "neutral"
 
@@ -866,12 +871,12 @@ def run_cycle(client):
         direction = analysis.get("direction", "SKIP")
         confidence = analysis.get("confidence", "LOW")
 
-        # ── BTC macro filter ─────────────────────────────────────────────────
+        # ── BTC macro filter (solo bloquea en tendencias fuertes gap>1.5%) ──
         if btc_macro == "bearish" and direction == "LONG" and strategy != "MEAN_REVERSION":
-            log.info(f"    🚫 LONG vetado — BTC macro bearish ({strategy})")
+            log.info(f"    🚫 LONG vetado — BTC macro fuertemente bearish ({strategy})")
             continue
         if btc_macro == "bullish" and direction == "SHORT" and strategy != "MEAN_REVERSION":
-            log.info(f"    🚫 SHORT vetado — BTC macro bullish ({strategy})")
+            log.info(f"    🚫 SHORT vetado — BTC macro fuertemente bullish ({strategy})")
             continue
 
         scan_entry = {
