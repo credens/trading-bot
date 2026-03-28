@@ -621,14 +621,17 @@ function AltcoinPanel({ data, liveprices, onClose }) {
           {closed.length===0
             ? <div style={{ color:"#bbb", textAlign:"center", padding:24 }}>Sin trades cerrados aún</div>
             : [...closed].reverse().slice(0,15).map((t,i)=>(
-              <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"10px 14px", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                  <span style={{ color:"#ff64c8", fontFamily:"monospace", minWidth:80 }}>{t.symbol}</span>
-                  <Badge text={t.direction||t.side} color={(t.direction||t.side)==="LONG"?"#00ff88":"#ff4444"} />
-                  <Badge text={t.strategy} color={stratColor(t.strategy)} />
-                  <Badge text={t.exit_reason||"CLOSE"} color={t.exit_reason==="TAKE_PROFIT"?"#00ff88":t.exit_reason==="STOP_LOSS"?"#ff4444":"#bbb"} />
+              <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"10px 14px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                    <span style={{ color:"#ff64c8", fontFamily:"monospace", minWidth:80 }}>{t.symbol}</span>
+                    <Badge text={t.direction||t.side} color={(t.direction||t.side)==="LONG"?"#00ff88":"#ff4444"} />
+                    <Badge text={t.strategy} color={stratColor(t.strategy)} />
+                    <Badge text={t.exit_reason||"CLOSE"} color={t.exit_reason==="TAKE_PROFIT"?"#00ff88":t.exit_reason==="STOP_LOSS"?"#ff4444":"#bbb"} />
+                  </div>
+                  <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontWeight:700 }}>{t.pnl>=0?"+":""}${t.pnl?.toFixed(2)}</span>
                 </div>
-                <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontWeight:700 }}>{t.pnl>=0?"+":""}${t.pnl?.toFixed(2)}</span>
+                {(t.exit_time||t.entry_time) && <div style={{ color:"#888", fontSize:10, fontFamily:"monospace", marginTop:4 }}>{new Date(t.exit_time||t.entry_time).toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} — {t.entry_time ? `${((new Date(t.exit_time||t.entry_time)-new Date(t.entry_time))/60000).toFixed(0)}min` : ""}</div>}
               </div>
             ))
           }
