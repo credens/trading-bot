@@ -515,7 +515,7 @@ def _make_result(decision: str, confidence: str, reasoning: str,
 
 def _strat_result(decision, confidence, reasoning, signals, price, atr_pct, name):
     sl_pct = round(max(atr_pct * 1.5 / 100, 0.018), 4)
-    tp_pct = round(sl_pct * 2.5, 4)
+    tp_pct = round(sl_pct * 3.0, 4)
     log.info(f"  [{name}] → {decision} ({confidence}) | {reasoning}")
     return {
         "decision": decision, "confidence": confidence,
@@ -711,12 +711,27 @@ def run_strategies(client, current_position: str, capital: float) -> dict:
     for r in [r1, r2, r3]:
         all_signals.extend(r.get("key_signals", [])[:2])
 
-    # LONG: siempre 3/3 (conservador en downtrend)
-    if long_v == 3:
-        return {"decision": "LONG", "confidence": "HIGH",
-                "reasoning": f"Unanimidad 3/3 LONG", "key_signals": all_signals,
-                "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
-                "position_size_pct": 0.10}
+    # LONG: filtrado por macro
+    #   macro fuerte bearish (gap > 1%): BLOQUEAR LONGs
+    #   macro bearish moderado: 2/3 con size reducido (50%)
+    #   macro bullish/neutral: 2/3 normal
+    if long_v >= 2:
+        if macro_strong and macro_gap > 1.0:
+            log.info(f"  🚫 LONG bloqueado — macro fuerte bearish ({macro_gap:+.2f}%)")
+        elif macro_1h == "bearish":
+            conf = "HIGH" if long_v == 3 else "MEDIUM"
+            size = 0.05  # size reducido en macro bearish
+            log.info(f"  LONG {long_v}/3 (macro bearish, size reducido ${size*100:.0f}%)")
+            return {"decision": "LONG", "confidence": conf,
+                    "reasoning": f"LONG {long_v}/3 — macro bearish (size reducido)", "key_signals": all_signals,
+                    "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
+                    "position_size_pct": size}
+        else:
+            conf = "HIGH" if long_v == 3 else "MEDIUM"
+            return {"decision": "LONG", "confidence": conf,
+                    "reasoning": f"LONG {long_v}/3 — macro {macro_1h}", "key_signals": all_signals,
+                    "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
+                    "position_size_pct": 0.10 if conf == "HIGH" else 0.07}
 
     # SHORT threshold según fuerza del macro:
     #   macro fuerte bearish (gap > 0.4%): 1/3 basta si HIGH confidence

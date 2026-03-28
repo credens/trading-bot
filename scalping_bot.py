@@ -57,6 +57,27 @@ MIN_HOLD_SECS  = 180     # 3 min mínimo antes de cerrar por SIGNAL (evita whips
 BINANCE_API_KEY    = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 
+# ─── Macro 1h cache (se refresca cada 5 min) ────────────────────────────────
+_macro_cache = {"trend": "neutral", "gap": 0.0, "ts": 0}
+
+def get_macro_1h(client):
+    """BTC 1h macro trend con cache de 5 min."""
+    import time as _t
+    now = _t.time()
+    if now - _macro_cache["ts"] < 300:  # 5 min cache
+        return _macro_cache["trend"], _macro_cache["gap"]
+    try:
+        klines = client.futures_klines(symbol=SYMBOL, interval="1h", limit=210)
+        closes = pd.Series([float(k[4]) for k in klines])
+        ema50 = float(closes.ewm(span=50, adjust=False).mean().iloc[-1])
+        ema200 = float(closes.ewm(span=200, adjust=False).mean().iloc[-1])
+        gap = (ema200 - ema50) / ema200 * 100  # positivo = bearish
+        trend = "bearish" if ema50 < ema200 else "bullish"
+        _macro_cache.update({"trend": trend, "gap": gap, "ts": now})
+        return trend, gap
+    except Exception:
+        return _macro_cache["trend"], _macro_cache["gap"]
+
 # ─── Paper Trading ────────────────────────────────────────────────────────────
 from paper_trading import get_scalping_engine, SCALPING_STATE
 import json as _json
@@ -232,7 +253,7 @@ def analyze(ind: dict, current_position: str) -> dict:
 
     # SL dinámico basado en ATR (mín 0.4%, máx 0.6%)
     sl_pct = round(max(min(atr_pct * 1.2 / 100, 0.006), SL_PCT), 5)
-    tp_pct = round(sl_pct * 2.0, 5)
+    tp_pct = round(sl_pct * 2.8, 5)
 
     def make(decision, confidence, reasoning, signals):
         return {
@@ -527,6 +548,19 @@ def run_cycle(client, paper):
             except Exception as _ce:
                 log.warning(f"  Error circuit breaker: {_ce}")
 
+            # Macro filter: reducir LONGs en bearish, bloquear en fuerte bearish
+            macro_trend, macro_gap = get_macro_1h(client)
+            if action == "LONG" and macro_trend == "bearish":
+                if macro_gap > 1.5:
+                    log.info(f"  🚫 LONG bloqueado — macro fuerte bearish ({macro_gap:+.1f}%)")
+                    paper.add_log(f"🚫 LONG bloqueado (macro gap {macro_gap:+.1f}%)")
+                    paper.save()
+                    return
+                else:
+                    # Size reducido: 50% del normal
+                    decision["position_size_pct"] = POS_PCT * 0.5
+                    log.info(f"  ⚠️ LONG size reducido 50% — macro bearish ({macro_gap:+.1f}%)")
+
             if open_trade and open_trade.side != action:
                 paper.close_scalping_position(price, "SIGNAL")
             if not paper.get_scalping_position():
@@ -540,7 +574,7 @@ def run_cycle(client, paper):
 def run_forever():
     log.info("🔪 Scalping Bot v2 — BTC 1m — CVD + ADX Regime + Trailing Stop")
     log.info(f"   Modo: {'DRY RUN' if DRY_RUN else '⚠️  REAL'} | Leverage: {LEVERAGE}x | Ciclo: {CYCLE_SECONDS}s")
-    log.info(f"   SL: {SL_PCT*100:.1f}%+ (ATR) | TP: SL×2 | Capital: ${SCALP_CAPITAL}")
+    log.info(f"   SL: {SL_PCT*100:.1f}%+ (ATR) | TP: SL×2.8 | Capital: ${SCALP_CAPITAL}")
 
     client = get_client()
     paper  = get_scalping_engine(initial_capital=SCALP_CAPITAL)
