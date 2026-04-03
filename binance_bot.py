@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 import pandas as pd
 import numpy as np
 
-load_dotenv()
+load_dotenv(override=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
@@ -569,17 +569,36 @@ def strategy_macd_momentum(client, current_position: str, capital: float) -> dic
         if vol_ratio > 1.8: signals.append(f"Vol {vol_ratio:.1f}x ✓")
         return _strat_result("SHORT", "HIGH" if score >= 2 else "MEDIUM",
                              f"Bearish cross+vol {vol_ratio:.1f}x+trend {trend}", signals, price, atr_pct, name)
-    # Momentum sostenido: hist negativo ≥3 velas + precio bajo EMA50 → SHORT (sin cruce fresco)
+    # Momentum sostenido: hist negativo ≥3 velas + precio bajo EMA50 → SHORT
     hist_3 = [float(hist.iloc[-i]) for i in range(1, 4)]
-    if all(h < 0 for h in hist_3) and price < ema50_val * 0.999:
+    if all(h < 0 for h in hist_3) and price < ema50_val:
         signals = [f"MACD hist negativo sostenido ({hist_now:.1f})", f"Precio bajo EMA50"]
         if vol_ratio > 1.5: signals.append(f"Vol {vol_ratio:.1f}x")
         return _strat_result("SHORT", "MEDIUM", f"Momentum bajista sostenido (hist={hist_now:.1f}, {trend})", signals, price, atr_pct, name)
     # Momentum alcista sostenido
-    if all(h > 0 for h in hist_3) and price > ema50_val * 1.001:
+    if all(h > 0 for h in hist_3) and price > ema50_val:
         signals = [f"MACD hist positivo sostenido ({hist_now:.1f})", f"Precio sobre EMA50"]
         if vol_ratio > 1.5: signals.append(f"Vol {vol_ratio:.1f}x")
         return _strat_result("LONG", "MEDIUM", f"Momentum alcista sostenido (hist={hist_now:.1f}, {trend})", signals, price, atr_pct, name)
+    # Near-crossover: histograma acercándose a cero + encogiendo + trend alineado
+    hist_10 = [abs(float(hist.iloc[-i])) for i in range(1, min(11, len(hist)))]
+    hist_range = max(hist_10) if hist_10 else 1
+    if hist_range > 0:
+        nearness = abs(hist_now) / hist_range
+        if nearness < 0.15 and hist_now < 0 and hist_prev < hist_now and trend == "bullish":
+            signals = ["MACD acercándose a cross bullish", f"Hist encogiendo: {hist_now:.1f}"]
+            return _strat_result("LONG", "MEDIUM", f"Near bullish cross (hist={hist_now:.1f}, encogiendo)", signals, price, atr_pct, name)
+        if nearness < 0.15 and hist_now > 0 and hist_prev > hist_now and trend == "bearish":
+            signals = ["MACD acercándose a cross bearish", f"Hist encogiendo: {hist_now:.1f}"]
+            return _strat_result("SHORT", "MEDIUM", f"Near bearish cross (hist={hist_now:.1f}, encogiendo)", signals, price, atr_pct, name)
+    # Momentum extendido 5 velas + magnitud creciente (sin requisito price vs EMA50)
+    hist_5 = [float(hist.iloc[-i]) for i in range(1, 6)]
+    if all(h > 0 for h in hist_5) and hist_5[0] > hist_5[2]:
+        signals = [f"MACD hist positivo 5+ velas ({hist_now:.1f})", "Momentum creciente"]
+        return _strat_result("LONG", "MEDIUM", f"Mild bullish momentum (hist={hist_now:.1f})", signals, price, atr_pct, name)
+    if all(h < 0 for h in hist_5) and hist_5[0] < hist_5[2]:
+        signals = [f"MACD hist negativo 5+ velas ({hist_now:.1f})", "Momentum decreciente"]
+        return _strat_result("SHORT", "MEDIUM", f"Mild bearish momentum (hist={hist_now:.1f})", signals, price, atr_pct, name)
     return _strat_result("FLAT", "MEDIUM", f"Sin cruce MACD válido (hist={hist_now:.1f}, trend={trend})", ["Esperando cruce"], price, atr_pct, name)
 
 
@@ -610,16 +629,23 @@ def strategy_rsi_vwap(client, current_position: str, capital: float) -> dict:
         if rsi < 45 or price <= vwap * 0.997:
             return _strat_result("FLAT", "HIGH", f"Reversión completada (RSI {rsi:.0f})", ["Objetivo alcanzado"], price, atr_pct, name)
         return _strat_result("HOLD", "MEDIUM", f"SHORT reversión en curso RSI {rsi:.0f}", [f"RSI {rsi:.0f}"], price, atr_pct, name)
-    if rsi < 32 and vwap_dev < -0.6:
+    if rsi < 38 and vwap_dev < -0.3:
         signals = [f"RSI sobrevendido ({rsi:.0f})", f"Dev VWAP {vwap_dev:.2f}%"]
-        score = sum([rsi > rsi_prev, bb_pct < 0.1, rsi < 25])
+        score = sum([rsi > rsi_prev, bb_pct < 0.15, rsi < 30, vwap_dev < -0.5])
         if rsi > rsi_prev: signals.append("RSI girando arriba ✓")
         return _strat_result("LONG", "HIGH" if score >= 2 else "MEDIUM", f"RSI {rsi:.0f}+VWAP {vwap_dev:.2f}%", signals, price, atr_pct, name)
-    if rsi > 68 and vwap_dev > 0.6:
+    if rsi > 62 and vwap_dev > 0.3:
         signals = [f"RSI sobrecomprado ({rsi:.0f})", f"Dev VWAP {vwap_dev:.2f}%"]
-        score = sum([rsi < rsi_prev, bb_pct > 0.9, rsi > 75])
+        score = sum([rsi < rsi_prev, bb_pct > 0.85, rsi > 70, vwap_dev > 0.5])
         if rsi < rsi_prev: signals.append("RSI girando abajo ✓")
         return _strat_result("SHORT", "HIGH" if score >= 2 else "MEDIUM", f"RSI {rsi:.0f}+VWAP {vwap_dev:.2f}%", signals, price, atr_pct, name)
+    # RSI moderado + Bollinger en extremo (sin requerir VWAP)
+    if rsi < 35 and bb_pct < 0.05 and rsi > rsi_prev:
+        signals = [f"RSI oversold ({rsi:.0f}) + BB squeeze ({bb_pct:.2f})", "RSI girando arriba"]
+        return _strat_result("LONG", "MEDIUM", f"RSI {rsi:.0f} + BB {bb_pct:.2f}", signals, price, atr_pct, name)
+    if rsi > 65 and bb_pct > 0.95 and rsi < rsi_prev:
+        signals = [f"RSI overbought ({rsi:.0f}) + BB top ({bb_pct:.2f})", "RSI girando abajo"]
+        return _strat_result("SHORT", "MEDIUM", f"RSI {rsi:.0f} + BB {bb_pct:.2f}", signals, price, atr_pct, name)
     return _strat_result("FLAT", "MEDIUM", f"Sin extremo (RSI {rsi:.0f}, VWAP dev {vwap_dev:+.2f}%)", ["Esperando extremo RSI+VWAP"], price, atr_pct, name)
 
 
@@ -641,8 +667,8 @@ def strategy_cvd_divergence(client, current_position: str, capital: float) -> di
     cvd_chg = float(cvd.iloc[-1] - cvd.iloc[-N])
     price_dir = "up" if price_chg > 0 else "down"
     cvd_dir = "up" if cvd_chg > 0 else "down"
-    price_moved = abs(price_chg) > 0.4
-    cvd_moved = abs(cvd_chg) > (volume.iloc[-N:].mean() * 0.05)
+    price_moved = abs(price_chg) > 0.25
+    cvd_moved = abs(cvd_chg) > (volume.iloc[-N:].mean() * 0.03)
     ema50 = close.ewm(span=50, adjust=False).mean(); ema200 = close.ewm(span=200, adjust=False).mean()
     macro = "bullish" if float(ema50.iloc[-1]) > float(ema200.iloc[-1]) else "bearish"
     delta = close.diff(); gain = delta.clip(lower=0).rolling(14).mean(); loss = (-delta.clip(upper=0)).rolling(14).mean()
@@ -667,20 +693,44 @@ def strategy_cvd_divergence(client, current_position: str, capital: float) -> di
         if macro == "bullish": signals.append("Macro bullish confirma ✓")
         return _strat_result("LONG", "HIGH" if score >= 2 else "MEDIUM",
                              f"Bullish CVD div | precio {price_chg:+.2f}% | CVD ↑", signals, price, atr_pct, name)
+    # Momentum confirmation: precio Y CVD en la misma dirección + volumen alto
+    vol_sma = volume.rolling(20).mean()
+    vol_ratio = float(volume.iloc[-1] / vol_sma.iloc[-1])
+    if price_dir == "up" and cvd_dir == "up" and price_moved and cvd_moved and vol_ratio > 1.3:
+        signals = [f"Precio +{price_chg:.2f}% con CVD confirmando", f"Vol {vol_ratio:.1f}x"]
+        score = sum([macro == "bullish", vol_ratio > 1.8, price_chg > 0.5])
+        return _strat_result("LONG", "HIGH" if score >= 2 else "MEDIUM",
+                             f"CVD momentum confirm | precio {price_chg:+.2f}% | CVD ↑", signals, price, atr_pct, name)
+    if price_dir == "down" and cvd_dir == "down" and price_moved and cvd_moved and vol_ratio > 1.3:
+        signals = [f"Precio {price_chg:.2f}% con CVD confirmando", f"Vol {vol_ratio:.1f}x"]
+        score = sum([macro == "bearish", vol_ratio > 1.8, abs(price_chg) > 0.5])
+        return _strat_result("SHORT", "HIGH" if score >= 2 else "MEDIUM",
+                             f"CVD momentum confirm | precio {price_chg:+.2f}% | CVD ↓", signals, price, atr_pct, name)
     return _strat_result("FLAT", "MEDIUM", f"Sin divergencia (precio {price_dir} {price_chg:+.2f}%, CVD {cvd_dir})", ["Esperando divergencia"], price, atr_pct, name)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SISTEMA DE VOTACIÓN — necesita 3/3 (unanimidad) para entrar
 # ══════════════════════════════════════════════════════════════════════════════
-def run_strategies(client, current_position: str, capital: float) -> dict:
-    """Ejecuta las 3 estrategias y decide por votación.
-    - LONG: siempre requiere 3/3 unanimidad (conservador)
-    - SHORT: requiere 2/3 cuando macro 1h es bearish (ir con el trend), 3/3 si bullish
-    """
-    r1 = strategy_macd_momentum(client, current_position, capital)
-    r2 = strategy_rsi_vwap(client, current_position, capital)
-    r3 = strategy_cvd_divergence(client, current_position, capital)
+def run_strategies(client, current_position: str, capital: float, scenario=None) -> dict:
+    """Ejecuta estrategias según escenario y decide por votación."""
+    from market_scenario import is_with_trend, get_size
+
+    if scenario is None:
+        from market_scenario import detect_scenario
+        scenario = detect_scenario(client)
+
+    active = scenario.get("bn_strategies", ["MACD_MOM", "RSI_VWAP", "CVD_DIV"])
+    tp_mult = scenario.get("bn_tp_mult", 1.0)
+    min_hold = scenario.get("bn_min_hold_min", 3)
+
+    log.info(f"  📊 Escenario: {scenario['name']} | bias={scenario['direction']} | estrategias={active}")
+
+    # Ejecutar solo estrategias activas, FLAT para las demás
+    flat_result = lambda name: _strat_result("FLAT", "LOW", f"Desactivada en {scenario['name']}", [], 0, 0.02, name)
+    r1 = strategy_macd_momentum(client, current_position, capital) if "MACD_MOM" in active else flat_result("MACD_MOM")
+    r2 = strategy_rsi_vwap(client, current_position, capital) if "RSI_VWAP" in active else flat_result("RSI_VWAP")
+    r3 = strategy_cvd_divergence(client, current_position, capital) if "CVD_DIV" in active else flat_result("CVD_DIV")
 
     votes = {"LONG": 0, "SHORT": 0, "FLAT": 0, "HOLD": 0}
     for r in [r1, r2, r3]:
@@ -691,76 +741,64 @@ def run_strategies(client, current_position: str, capital: float) -> dict:
     for r in [r1, r2, r3]:
         log.info(f"    {r['_strategy']}: {r['decision']} — {r['reasoning']}")
 
-    # Calcular macro 1h para votación asimétrica
-    try:
-        df1h = fetch_ohlcv(client, interval="1h", limit=220)
-        ema50_1h = float(df1h["close"].ewm(span=50, adjust=False).mean().iloc[-1])
-        ema200_1h = float(df1h["close"].ewm(span=200, adjust=False).mean().iloc[-1])
-        macro_gap = (ema200_1h - ema50_1h) / ema200_1h * 100  # positivo = bearish
-        macro_1h = "bearish" if ema50_1h < ema200_1h else "bullish"
-        macro_strong = macro_gap > 0.4  # EMA50 más de 0.4% por debajo de EMA200
-    except Exception:
-        macro_1h = "neutral"; macro_gap = 0; macro_strong = False
-
-    log.info(f"  Macro gap: {macro_gap:+.3f}% ({'FUERTE' if macro_strong else 'moderado'} {macro_1h})")
-
-    price = r1["entry_price"]
+    price = r1["entry_price"] if r1["entry_price"] else r2["entry_price"]
     sl_pct = max(r["stop_loss_pct"] for r in [r1, r2, r3])
-    tp_pct = max(r["take_profit_pct"] for r in [r1, r2, r3])
+    tp_pct = max(r["take_profit_pct"] for r in [r1, r2, r3]) * tp_mult
     all_signals = []
     for r in [r1, r2, r3]:
         all_signals.extend(r.get("key_signals", [])[:2])
 
-    # LONG: filtrado por macro
-    #   macro fuerte bearish (gap > 1%): BLOQUEAR LONGs
-    #   macro bearish moderado: 2/3 con size reducido (50%)
-    #   macro bullish/neutral: 2/3 normal
-    if long_v >= 2:
-        if macro_strong and macro_gap > 1.0:
-            log.info(f"  🚫 LONG bloqueado — macro fuerte bearish ({macro_gap:+.2f}%)")
-        elif macro_1h == "bearish":
-            conf = "HIGH" if long_v == 3 else "MEDIUM"
-            size = 0.05  # size reducido en macro bearish
-            log.info(f"  LONG {long_v}/3 (macro bearish, size reducido ${size*100:.0f}%)")
-            return {"decision": "LONG", "confidence": conf,
-                    "reasoning": f"LONG {long_v}/3 — macro bearish (size reducido)", "key_signals": all_signals,
-                    "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
-                    "position_size_pct": size}
-        else:
-            conf = "HIGH" if long_v == 3 else "MEDIUM"
-            return {"decision": "LONG", "confidence": conf,
-                    "reasoning": f"LONG {long_v}/3 — macro {macro_1h}", "key_signals": all_signals,
-                    "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
-                    "position_size_pct": 0.10 if conf == "HIGH" else 0.07}
+    macro_gap = scenario.get("macro_gap", 0)
+    direction = scenario.get("direction", "neutral")
+    log.info(f"  Macro gap: {macro_gap:+.3f}% ({scenario['name']} {direction})")
 
-    # SHORT threshold según fuerza del macro:
-    #   macro fuerte bearish (gap > 0.4%): 1/3 basta si HIGH confidence
-    #   macro bearish moderado: 2/3
-    #   macro bullish: 3/3
-    if macro_strong and short_v >= 1:
-        # Solo aceptar si la estrategia que vota SHORT tiene HIGH confidence
-        short_rs = [r for r in [r1, r2, r3] if r["decision"] == "SHORT"]
-        if short_rs and short_rs[0].get("confidence") == "HIGH":
-            log.info(f"  SHORT 1/3 HIGH — macro fuerte bearish ({macro_gap:+.2f}%)")
-            return {"decision": "SHORT", "confidence": "MEDIUM",
-                    "reasoning": f"SHORT 1/3 HIGH — macro fuerte {macro_gap:+.2f}%", "key_signals": all_signals,
-                    "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
-                    "position_size_pct": 0.07}
+    # ── Votación dinámica según escenario ──
+    # Intentar LONG
+    threshold_long = scenario.get("bn_vote_threshold_against", 3) if direction == "bearish" else scenario.get("bn_vote_threshold_with", 2)
+    size_long = get_size("LONG", scenario, "bn")
 
-    short_threshold = 2 if macro_1h == "bearish" else 3
-    if short_v >= short_threshold:
-        conf = "HIGH" if short_v == 3 else "MEDIUM"
-        log.info(f"  SHORT {short_v}/{short_threshold} (macro={macro_1h}) → {conf}")
-        return {"decision": "SHORT", "confidence": conf,
-                "reasoning": f"SHORT {short_v}/3 — macro {macro_1h}", "key_signals": all_signals,
-                "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
-                "position_size_pct": 0.10 if conf == "HIGH" else 0.07}
-    # Mayoría HOLD — mantener posición
+    if long_v >= threshold_long and size_long > 0:
+        # Si es 1/3 HIGH, verificar confianza
+        if long_v == 1:
+            long_rs = [r for r in [r1, r2, r3] if r["decision"] == "LONG"]
+            if not (long_rs and long_rs[0].get("confidence") == "HIGH"):
+                long_v = 0  # no pasa el filtro
+        if long_v >= 1:
+            conf = "HIGH" if long_v >= 3 else "MEDIUM"
+            log.info(f"  LONG {long_v}/{threshold_long} ({scenario['name']}, size={size_long})")
+            return {"decision": "LONG", "confidence": conf,
+                    "reasoning": f"LONG {long_v}/3 — {scenario['name']}", "key_signals": all_signals,
+                    "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
+                    "position_size_pct": size_long, "_min_hold_min": min_hold}
+    elif long_v > 0 and size_long == 0:
+        log.info(f"  🚫 LONG bloqueado — {scenario['name']} ({direction})")
+
+    # Intentar SHORT
+    threshold_short = scenario.get("bn_vote_threshold_against", 3) if direction == "bullish" else scenario.get("bn_vote_threshold_with", 2)
+    size_short = get_size("SHORT", scenario, "bn")
+
+    if short_v >= threshold_short and size_short > 0:
+        if short_v == 1:
+            short_rs = [r for r in [r1, r2, r3] if r["decision"] == "SHORT"]
+            if not (short_rs and short_rs[0].get("confidence") == "HIGH"):
+                short_v = 0
+        if short_v >= 1:
+            conf = "HIGH" if short_v >= 3 else "MEDIUM"
+            log.info(f"  SHORT {short_v}/{threshold_short} ({scenario['name']}, size={size_short})")
+            return {"decision": "SHORT", "confidence": conf,
+                    "reasoning": f"SHORT {short_v}/3 — {scenario['name']}", "key_signals": all_signals,
+                    "entry_price": price, "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
+                    "position_size_pct": size_short, "_min_hold_min": min_hold}
+    elif short_v > 0 and size_short == 0:
+        log.info(f"  🚫 SHORT bloqueado — {scenario['name']} ({direction})")
+
+    # Mayoría HOLD
     hold_rs = [r for r in [r1, r2, r3] if r["decision"] == "HOLD"]
     if len(hold_rs) >= 2:
         return {**hold_rs[0], "decision": "HOLD", "confidence": "MEDIUM", "reasoning": "Mayoría HOLD"}
+
     return {"decision": "FLAT", "confidence": "MEDIUM",
-            "reasoning": f"Sin mayoría (L:{long_v} S:{short_v} F:{votes['FLAT']}) → esperando",
+            "reasoning": f"Sin mayoría (L:{long_v} S:{short_v} F:{votes['FLAT']}) — {scenario['name']}",
             "key_signals": ["Señales divididas"], "entry_price": price,
             "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct, "position_size_pct": 0.06}
 
@@ -960,9 +998,12 @@ def run_cycle(client, paper=None):
 
     log.info(f"BTC: ${indicators['price']:,.2f} | RSI: {indicators['rsi']} | 15m: {indicators['trend']} | Macro 1h: {indicators['macro_trend']} | Vol: {indicators['vol_ratio']:.1f}x")
 
-    # 3. Estrategias votan (≥2/3 para entrar)
+    # 3. Detectar escenario + estrategias votan
+    from market_scenario import detect_scenario
+    scenario = detect_scenario(client)
+
     log.info("Evaluando estrategias...")
-    decision = run_strategies(client, current_position, capital)
+    decision = run_strategies(client, current_position, capital, scenario=scenario)
 
     if not decision:
         log.warning("No se pudo obtener decisión. Saltando ciclo.")
@@ -970,34 +1011,6 @@ def run_cycle(client, paper=None):
 
     action = decision.get("decision", "FLAT")
     confidence = decision.get("confidence", "LOW")
-
-    # ── MACRO OVERRIDE DURO: veto absoluto por macro 1h ──────────────────────
-    # Excepción: RSI < 30 + BB < 0.10 → rebote extremo, permitir LONG aunque macro bearish
-    macro_trend = indicators.get("macro_trend", "neutral")
-    rsi_now   = indicators.get("rsi", 50)
-    bb_now    = indicators.get("bb_pct", 0.5)
-    oversold_extreme = (rsi_now < 30 and bb_now < 0.10)
-    overbought_extreme = (rsi_now > 70 and bb_now > 0.90)
-
-    if action in ("LONG", "SHORT"):
-        if macro_trend == "bearish" and action == "LONG":
-            if oversold_extreme:
-                log.info(f"  ⚡ LONG permitido — RSI extremo ({rsi_now:.0f}) + BB lower ({bb_now:.2f}) overrides macro bearish")
-            else:
-                log.warning(f"  🚫 LONG vetado — macro 1h BEARISH (HARD VETO)")
-                action = "FLAT"; decision["decision"] = "FLAT"
-                decision["reasoning"] = "LONG vetado: macro 1h BEARISH"
-        elif macro_trend == "bullish" and action == "SHORT":
-            if overbought_extreme:
-                log.info(f"  ⚡ SHORT permitido — RSI extremo ({rsi_now:.0f}) + BB upper ({bb_now:.2f}) overrides macro bullish")
-            else:
-                log.warning(f"  🚫 SHORT vetado — macro 1h BULLISH (HARD VETO)")
-                action = "FLAT"; decision["decision"] = "FLAT"
-                decision["reasoning"] = "SHORT vetado: macro 1h BULLISH"
-        elif macro_trend == "neutral":
-            log.info(f"  ⏸️  Macro 1h NEUTRAL — no operar (esperando tendencia clara)")
-            action = "FLAT"; decision["decision"] = "FLAT"
-            decision["reasoning"] = "Macro 1h neutral — sin tendencia clara, esperando"
 
     log.info(f"Decisión: {action} | Confianza: {confidence}")
     log.info(f"  → {decision.get('reasoning', '')}")
@@ -1007,20 +1020,46 @@ def run_cycle(client, paper=None):
         # ── Paper Trading: ejecutar con datos reales, sin dinero real ──
         paper.check_binance_stops(indicators["price"])
 
-        # ── Trailing stop: mover SL a breakeven cuando el trade está +0.5% ──
+        # ── Trailing stop dinámico (ATR-based — acompaña el movimiento) ──
         _open = paper.get_binance_position()
         if _open:
             _price = indicators["price"]
             _entry = _open.entry_price
-            _move = (_price - _entry) / _entry if _open.side == "LONG" else (_entry - _price) / _entry
-            if _move >= 0.005:  # +0.5% en precio = +5% P&L con 10x leverage
-                _be_sl = round(_entry * 1.0008, 1) if _open.side == "LONG" else round(_entry * 0.9992, 1)
-                if _open.side == "LONG" and _open.stop_loss < _be_sl:
-                    _open.stop_loss = _be_sl
-                    log.info(f"  📍 Trailing → SL a breakeven LONG ${_be_sl:,.1f} (trade +{_move*100:.2f}%)")
-                elif _open.side == "SHORT" and _open.stop_loss > _be_sl:
-                    _open.stop_loss = _be_sl
-                    log.info(f"  📍 Trailing → SL a breakeven SHORT ${_be_sl:,.1f} (trade +{_move*100:.2f}%)")
+            _atr   = indicators.get("atr", 0)
+
+            if _atr > 0:
+                # Actualizar best_price
+                if _open.best_price is None:
+                    _open.best_price = _price
+                if _open.side == "LONG":
+                    _open.best_price = max(_open.best_price, _price)
+                else:
+                    _open.best_price = min(_open.best_price, _price)
+
+                _best = _open.best_price
+                _profit = (_best - _entry) / _entry if _open.side == "LONG" else (_entry - _best) / _entry
+
+                if _profit >= 0.003:  # mover SL solo con +0.3% profit
+                    # Binance usa timeframes más largos → distancias más amplias
+                    if _profit < 0.006:
+                        _trail = _atr * 2.5      # amplio — zona breakeven
+                    elif _profit < 0.012:
+                        _trail = _atr * 1.8      # moderado — lock profit
+                    else:
+                        _trail = _atr * 1.2      # ajustado — trailing real
+
+                    if _open.side == "LONG":
+                        new_sl = round(_best - _trail, 1)
+                        if new_sl > _open.stop_loss:
+                            _dist = abs(_best - new_sl) / _best * 100
+                            log.info(f"  📍 Trailing LONG → SL ${new_sl:,.1f} (profit +{_profit*100:.2f}%, best ${_best:,.1f}, dist {_dist:.3f}%)")
+                            _open.stop_loss = new_sl
+                    else:
+                        new_sl = round(_best + _trail, 1)
+                        if new_sl < _open.stop_loss:
+                            _dist = abs(_best - new_sl) / _best * 100
+                            log.info(f"  📍 Trailing SHORT → SL ${new_sl:,.1f} (profit +{_profit*100:.2f}%, best ${_best:,.1f}, dist {_dist:.3f}%)")
+                            _open.stop_loss = new_sl
 
         paper.update_market_data(
             btc_price=indicators["price"],
@@ -1037,7 +1076,14 @@ def run_cycle(client, paper=None):
         elif action == "FLAT":
             open_trade = paper.get_binance_position()
             if open_trade:
-                paper.close_binance_position(indicators["price"], "SIGNAL")
+                # Min hold: no cerrar antes del tiempo mínimo del escenario
+                min_hold_min = decision.get("_min_hold_min", scenario.get("bn_min_hold_min", 3))
+                held_secs = (datetime.now() - datetime.fromisoformat(open_trade.entry_time[:19])).total_seconds()
+                if held_secs < min_hold_min * 60:
+                    remaining = int(min_hold_min - held_secs / 60)
+                    paper.add_log(f"HOLD forzado — min hold {remaining}min ({scenario['name']})")
+                else:
+                    paper.close_binance_position(indicators["price"], "SIGNAL")
             else:
                 paper.add_log("FLAT — sin señal clara, esperando")
 

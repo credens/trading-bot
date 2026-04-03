@@ -43,6 +43,7 @@ class Trade:
     reasoning: str = ""
     confidence: str = ""
     leverage: int = 1
+    best_price: Optional[float] = None
 
 
 @dataclass

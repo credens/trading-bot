@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 import pandas as pd
 import numpy as np
 
-load_dotenv()
+load_dotenv(override=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
@@ -654,7 +654,7 @@ def _close_position(state, symbol, pos, exit_price, exit_reason, note=""):
     return pnl
 
 
-def check_positions(client, state: dict):
+def check_positions(client, state: dict, scenario=None):
     """Verifica posiciones abiertas: SL/TP, trailing stop, time limit, emergency."""
     to_close = []
     now = datetime.now()
@@ -682,16 +682,45 @@ def check_positions(client, state: dict):
             raw_change    = (current_price - entry) / entry
             unrealized_pct = (raw_change if direction == "LONG" else -raw_change) * lev
 
-            # ── Trailing stop: mover SL a breakeven cuando +0.5% ────────────
-            if not pos.get("trailing_activated") and unrealized_pct >= TRAILING_TRIGGER:
-                # SL sube/baja hasta entry (breakeven) + pequeño buffer
-                be_buffer = entry * 0.001  # 0.1% buffer sobre entrada
-                new_sl = entry + be_buffer if direction == "LONG" else entry - be_buffer
-                if (direction == "LONG" and new_sl > sl) or (direction == "SHORT" and new_sl < sl):
-                    pos["stop_loss"] = round(new_sl, 8)
-                    pos["trailing_activated"] = True
-                    state["positions"][symbol] = pos
-                    log.info(f"  🔒 TRAILING {symbol}: SL movido a BE ${new_sl:.6f} (unrealized {unrealized_pct*100:+.1f}%)")
+            # ── Trailing stop dinámico (ATR-based — acompaña el movimiento) ──
+            raw_move = abs(raw_change)
+
+            # Actualizar best_price en la posición
+            if "best_price" not in pos or pos["best_price"] is None:
+                pos["best_price"] = current_price
+            if direction == "LONG":
+                pos["best_price"] = max(pos["best_price"], current_price)
+            else:
+                pos["best_price"] = min(pos["best_price"], current_price)
+
+            best = pos["best_price"]
+            profit_raw = (best - entry) / entry if direction == "LONG" else (entry - best) / entry
+
+            base_trigger = scenario.get("alt_trailing_trigger", TRAILING_TRIGGER) if scenario else TRAILING_TRIGGER
+
+            if profit_raw >= base_trigger:  # mover SL cuando profit >= trigger base
+                # Distancia dinámica: % del precio que se reduce con el profit
+                if profit_raw < base_trigger * 2:
+                    trail_pct = 0.008     # 0.8% — zona breakeven
+                elif profit_raw < base_trigger * 4:
+                    trail_pct = 0.005     # 0.5% — lock profit
+                else:
+                    trail_pct = 0.003     # 0.3% — trailing ajustado
+
+                if direction == "LONG":
+                    new_sl = round(best * (1 - trail_pct), 8)
+                    if new_sl > pos["stop_loss"]:
+                        pos["stop_loss"] = new_sl
+                        pos["trailing_activated"] = True
+                        state["positions"][symbol] = pos
+                        log.info(f"  📍 TRAILING {symbol}: SL → ${new_sl:.6f} (profit +{profit_raw*100:.2f}%, best ${best:.4f}, dist {trail_pct*100:.1f}%)")
+                else:
+                    new_sl = round(best * (1 + trail_pct), 8)
+                    if new_sl < pos["stop_loss"]:
+                        pos["stop_loss"] = new_sl
+                        pos["trailing_activated"] = True
+                        state["positions"][symbol] = pos
+                        log.info(f"  📍 TRAILING {symbol}: SL → ${new_sl:.6f} (profit +{profit_raw*100:.2f}%, best ${best:.4f}, dist {trail_pct*100:.1f}%)")
 
             # ── Condiciones de cierre ─────────────────────────────────────────
             hit_tp = (direction == "LONG" and current_price >= tp) or \
@@ -772,10 +801,14 @@ def run_cycle(client):
         state["manual_close"] = []
         save_state(state)
 
-    # 1. Verificar posiciones abiertas
+    # 1. Detectar escenario temprano para trailing stop
+    from market_scenario import detect_scenario, is_with_trend
+    scenario = detect_scenario(client)
+
+    # 2. Verificar posiciones abiertas
     if state["positions"]:
         log.info(f"Verificando {len(state['positions'])} posiciones abiertas...")
-        check_positions(client, state)
+        check_positions(client, state, scenario=scenario)
 
     capital = state["capital"]
     open_count = len(state["positions"])
@@ -835,10 +868,9 @@ def run_cycle(client):
     if len(candidates) < len(altcoins):
         skipped = [s for s in cooldowns]
         log.info(f"  En cooldown (cierre manual): {skipped}")
-    # BTC macro filter (1h EMA50 vs EMA200)
-    btc_macro = get_btc_macro(client)
-    log.info(f"  BTC macro 1h: {btc_macro}")
-    state["btc_macro"] = btc_macro
+    # Escenario ya detectado arriba (cached 5 min)
+    log.info(f"  Escenario: {scenario['name']} | bias={scenario['direction']} | strategies={scenario.get('alt_strategies', [])}")
+    state["btc_macro"] = scenario["direction"]  # compat dashboard
 
     log.info(f"\nAnalizando {min(len(candidates), slots*2)} candidatos (5m candles)...")
     state["scanning"] = True
@@ -871,13 +903,19 @@ def run_cycle(client):
         direction = analysis.get("direction", "SKIP")
         confidence = analysis.get("confidence", "LOW")
 
-        # ── BTC macro filter (solo bloquea en tendencias fuertes gap>1.5%) ──
-        if btc_macro == "bearish" and direction == "LONG" and strategy != "MEAN_REVERSION":
-            log.info(f"    🚫 LONG vetado — BTC macro fuertemente bearish ({strategy})")
+        # ── Filtro por escenario: estrategia + dirección ──
+        allowed_strats = scenario.get("alt_strategies", ["RANGE", "MOMENTUM", "MEAN_REVERSION"])
+        if strategy not in allowed_strats and strategy not in ("EMA_CROSS", "SKIP"):
+            log.info(f"    🚫 {strategy} desactivada en {scenario['name']} (permitidas: {allowed_strats})")
             continue
-        if btc_macro == "bullish" and direction == "SHORT" and strategy != "MEAN_REVERSION":
-            log.info(f"    🚫 SHORT vetado — BTC macro fuertemente bullish ({strategy})")
+        # Bloqueo de dirección contra-tendencia
+        if scenario.get("alt_block_counter") and not is_with_trend(direction, scenario):
+            log.info(f"    🚫 {direction} bloqueado — contra-tendencia en {scenario['name']}")
             continue
+
+        # Aplicar multiplicadores del escenario
+        analysis["take_profit_pct"] = analysis["take_profit_pct"] * scenario.get("alt_tp_mult", 1.0)
+        analysis["position_size_usdt"] = analysis["position_size_usdt"] * scenario.get("alt_size_mult", 1.0)
 
         scan_entry = {
             "symbol": symbol,

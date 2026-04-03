@@ -91,14 +91,21 @@ echo "✓ Altcoin bot iniciado (PID: $ALT_PID)"
 # ─── WARP VPN (para Polymarket — bloqueado en AR) ────────────────────────────
 WARP_CLI="/usr/local/bin/warp-cli"
 if [ -x "$WARP_CLI" ]; then
-    WARP_STATUS=$("$WARP_CLI" status 2>&1 | grep -i "connected" || true)
-    if [ -z "$WARP_STATUS" ]; then
+    # Verificar si ya está conectada (excluir "Disconnected")
+    WARP_STATUS=$("$WARP_CLI" status 2>&1)
+    if echo "$WARP_STATUS" | grep -q "Status update: Connected"; then
+        echo "✓ WARP VPN ya conectada"
+    else
         echo "Conectando WARP VPN..."
         "$WARP_CLI" connect 2>/dev/null
-        sleep 2
-        echo "✓ WARP VPN conectada"
-    else
-        echo "✓ WARP VPN ya conectada"
+        sleep 3
+        # Verificar que se conectó
+        WARP_CHECK=$("$WARP_CLI" status 2>&1)
+        if echo "$WARP_CHECK" | grep -q "Status update: Connected"; then
+            echo "✓ WARP VPN conectada"
+        else
+            echo "⚠ WARP VPN falló al conectar: $WARP_CHECK"
+        fi
     fi
 else
     echo "⚠ WARP no instalado — Polymarket puede fallar (brew install cloudflare-warp)"

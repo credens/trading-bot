@@ -39,7 +39,7 @@ import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [SCALP] %(message)s")
 log = logging.getLogger(__name__)
 
@@ -205,6 +205,7 @@ def calc_indicators(df: pd.DataFrame) -> dict:
         "macd_hist":      round(macd_hist, 4),
         "macd_prev":      round(macd_prev, 4),
         "vol_ratio":      round(vol_ratio, 2),
+        "atr":            round(atr, 2),
         "atr_pct":        round(atr_pct, 3),
         "trend_ctx":      trend_ctx,
         # CVD
@@ -243,8 +244,10 @@ def detect_regime(ind: dict) -> str:
 
 
 # ─── Estrategias por régimen ──────────────────────────────────────────────────
-def analyze(ind: dict, current_position: str) -> dict:
-    """Decide: LONG / SHORT / FLAT / HOLD según el régimen de mercado."""
+def analyze(ind: dict, current_position: str, scenario=None) -> dict:
+    """Decide: LONG / SHORT / FLAT / HOLD según el régimen de mercado y escenario."""
+    from market_scenario import is_with_trend, get_size
+
     price   = ind["price"]
     atr_pct = ind["atr_pct"]
     rsi     = ind["rsi"]
@@ -253,14 +256,20 @@ def analyze(ind: dict, current_position: str) -> dict:
 
     # SL dinámico basado en ATR (mín 0.4%, máx 0.6%)
     sl_pct = round(max(min(atr_pct * 1.2 / 100, 0.006), SL_PCT), 5)
-    tp_pct = round(sl_pct * 2.8, 5)
+    tp_mult = scenario.get("sc_tp_mult", 1.0) if scenario else 1.0
+    tp_pct = round(sl_pct * 2.8 * tp_mult, 5)
 
     def make(decision, confidence, reasoning, signals):
+        # Size dinámico según escenario y dirección
+        if scenario and decision in ("LONG", "SHORT"):
+            size = get_size(decision, scenario, "sc")
+        else:
+            size = POS_PCT
         return {
             "decision": decision, "confidence": confidence,
             "reasoning": reasoning, "key_signals": signals,
             "entry_price": price, "stop_loss_pct": sl_pct,
-            "take_profit_pct": tp_pct, "position_size_pct": POS_PCT,
+            "take_profit_pct": tp_pct, "position_size_pct": size,
         }
 
     # ── Volatilidad extrema ────────────────────────────────────
@@ -280,6 +289,14 @@ def analyze(ind: dict, current_position: str) -> dict:
 
     # ── Detectar régimen ───────────────────────────────────────
     regime = detect_regime(ind)
+
+    # ── Filtrar régimen según escenario ────────────────────────
+    if scenario:
+        allowed = scenario.get("sc_regimes", ["TREND", "RANGE", "BREAKOUT", "MIXED"])
+        if not allowed:
+            return make("FLAT", "MEDIUM", f"Escenario {scenario['name']} — scalping pausado", ["Volatilidad extrema"])
+        if regime not in allowed:
+            return make("FLAT", "MEDIUM", f"Régimen {regime} desactivado en {scenario['name']}", [f"Permitidos: {','.join(allowed)}"])
 
     # ══════════════════════════════════════════════════════════
     # MODO BREAKOUT — volumen explosivo (>2.5x)
@@ -400,28 +417,62 @@ def analyze(ind: dict, current_position: str) -> dict:
     return make("FLAT", "MEDIUM", f"MIXED — esperando definición (ADX:{ind['adx']:.0f})", ["Transición de régimen"])
 
 
-# ─── Trailing Stop ────────────────────────────────────────────────────────────
-def update_trailing_stop(open_trade, price: float) -> Optional[float]:
+# ─── Trailing Stop Dinámico (ATR-based) ──────────────────────────────────────
+def update_trailing_stop(open_trade, price: float, atr: float = 0) -> Optional[float]:
     """
-    Mueve el SL a breakeven (+0.1%) cuando el trade llega al 50% del TP.
-    Retorna el nuevo SL si se movió, None si no.
+    Trailing dinámico que acompaña el movimiento del precio.
+
+    Lógica:
+    1. Trackea best_price (máximo para LONG, mínimo para SHORT)
+    2. El SL se calcula desde best_price (NO desde entry)
+    3. La distancia se reduce progresivamente a medida que el profit crece:
+       - Profit < 0.3%  → no se mueve (dejar respirar)
+       - Profit 0.3-0.5% → SL = best_price - ATR × 2.0 (breakeven zone)
+       - Profit 0.5-1.0% → SL = best_price - ATR × 1.5 (lock profit)
+       - Profit > 1.0%   → SL = best_price - ATR × 1.0 (tight trail)
+    4. El SL nunca retrocede (solo sube para LONG, solo baja para SHORT)
     """
-    if not open_trade:
+    if not open_trade or atr <= 0:
         return None
+
     entry = open_trade.entry_price
     sl    = open_trade.stop_loss
-    tp    = open_trade.take_profit
+    side  = open_trade.side
 
-    if open_trade.side == "LONG":
-        half_tp = entry + (tp - entry) * 0.5
-        breakeven = entry * 1.001  # entry + 0.1% para cubrir fees
-        if price >= half_tp and sl < breakeven:
-            return breakeven
+    # ── Actualizar best_price ────────────────────────────────────
+    if open_trade.best_price is None:
+        open_trade.best_price = price
+    if side == "LONG":
+        open_trade.best_price = max(open_trade.best_price, price)
     else:
-        half_tp = entry - (entry - tp) * 0.5
-        breakeven = entry * 0.999
-        if price <= half_tp and sl > breakeven:
-            return breakeven
+        open_trade.best_price = min(open_trade.best_price, price)
+
+    best = open_trade.best_price
+    profit_pct = (best - entry) / entry if side == "LONG" else (entry - best) / entry
+
+    # ── No mover si profit < 0.3% (dejar respirar el trade) ─────
+    if profit_pct < 0.003:
+        return None
+
+    # ── Distancia dinámica basada en ATR + profit ────────────────
+    if profit_pct < 0.005:
+        trail_dist = atr * 2.0       # amplio — zona breakeven
+    elif profit_pct < 0.010:
+        trail_dist = atr * 1.5       # moderado — lock profit
+    else:
+        trail_dist = atr * 1.0       # ajustado — trailing real
+
+    # ── Calcular nuevo SL desde best_price ───────────────────────
+    if side == "LONG":
+        candidate = round(best - trail_dist, 2)
+        # Nunca retroceder y nunca peor que entry
+        if candidate > sl:
+            return candidate
+    else:
+        candidate = round(best + trail_dist, 2)
+        if candidate < sl:
+            return candidate
+
     return None
 
 
@@ -456,10 +507,13 @@ def run_cycle(client, paper):
 
     log.info(f"  BTC ${price:,.2f} | Regime:{detect_regime(ind)} ADX:{ind['adx']:.0f} | EMA:{ind['ema_trend']} RSI:{ind['rsi']} CVD:{'↑' if ind['cvd_bullish'] else '↓'} Vol:{ind['vol_ratio']:.1f}x | Pos:{current_pos}")
 
-    # 3. Trailing stop
-    new_sl = update_trailing_stop(open_trade, price)
+    # 3. Trailing stop dinámico (ATR-based)
+    new_sl = update_trailing_stop(open_trade, price, atr=ind["atr"])
     if new_sl:
-        log.info(f"  📈 Trailing stop: SL movido a ${new_sl:,.2f} (breakeven)")
+        move_pct = abs(price - open_trade.entry_price) / open_trade.entry_price * 100
+        best = open_trade.best_price or price
+        dist_pct = abs(best - new_sl) / best * 100
+        log.info(f"  📈 Trailing → SL ${new_sl:,.2f} (profit +{move_pct:.2f}%, best ${best:,.2f}, dist {dist_pct:.3f}%)")
         open_trade.stop_loss = new_sl
         paper.save()
 
@@ -482,8 +536,12 @@ def run_cycle(client, paper):
             return
     except Exception: pass
 
-    # 6. Decisión
-    decision = analyze(ind, current_pos)
+    # 6. Detectar escenario + decisión
+    from market_scenario import detect_scenario
+    scenario = detect_scenario(client)
+    log.info(f"  Escenario: {scenario['name']} | bias={scenario['direction']} | regimes={scenario.get('sc_regimes', [])}")
+
+    decision = analyze(ind, current_pos, scenario=scenario)
     action   = decision["decision"]
     conf     = decision["confidence"]
     log.info(f"  → {action} [{conf}] | {decision['reasoning']}")
@@ -494,9 +552,11 @@ def run_cycle(client, paper):
 
     elif action == "FLAT":
         if open_trade:
+            min_hold_sec = scenario.get("sc_min_hold_sec", MIN_HOLD_SECS)
             held_secs = (datetime.now() - datetime.fromisoformat(open_trade.entry_time[:19])).total_seconds()
-            if held_secs < MIN_HOLD_SECS:
-                paper.add_log(f"Señal FLAT ignorada — hold mínimo ({held_secs:.0f}s/{MIN_HOLD_SECS}s)")
+            if held_secs < min_hold_sec:
+                remaining = int(min_hold_sec - held_secs)
+                paper.add_log(f"HOLD forzado — min hold {remaining}s ({scenario['name']})")
             else:
                 paper.close_scalping_position(price, "SIGNAL")
         else:
@@ -548,18 +608,12 @@ def run_cycle(client, paper):
             except Exception as _ce:
                 log.warning(f"  Error circuit breaker: {_ce}")
 
-            # Macro filter: reducir LONGs en bearish, bloquear en fuerte bearish
-            macro_trend, macro_gap = get_macro_1h(client)
-            if action == "LONG" and macro_trend == "bearish":
-                if macro_gap > 1.5:
-                    log.info(f"  🚫 LONG bloqueado — macro fuerte bearish ({macro_gap:+.1f}%)")
-                    paper.add_log(f"🚫 LONG bloqueado (macro gap {macro_gap:+.1f}%)")
-                    paper.save()
-                    return
-                else:
-                    # Size reducido: 50% del normal
-                    decision["position_size_pct"] = POS_PCT * 0.5
-                    log.info(f"  ⚠️ LONG size reducido 50% — macro bearish ({macro_gap:+.1f}%)")
+            # Bloqueo por size=0 del escenario (reemplaza macro filter)
+            if decision.get("position_size_pct", 0) <= 0:
+                log.info(f"  🚫 {action} bloqueado — size=0 en {scenario['name']}")
+                paper.add_log(f"🚫 {action} bloqueado ({scenario['name']})")
+                paper.save()
+                return
 
             if open_trade and open_trade.side != action:
                 paper.close_scalping_position(price, "SIGNAL")

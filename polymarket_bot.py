@@ -152,6 +152,12 @@ def fetch_active_markets(limit: int = 50, min_volume: float = 10000) -> list[Mar
     for m in raw:
         try:
             clob_token_ids = m.get("clobTokenIds", [])
+            # clobTokenIds puede ser string JSON o lista
+            if isinstance(clob_token_ids, str):
+                try:
+                    clob_token_ids = json.loads(clob_token_ids)
+                except Exception:
+                    clob_token_ids = []
             if not clob_token_ids:
                 continue
 
@@ -389,6 +395,11 @@ def fetch_position_prices(engine) -> dict:
 
         for m in raw:
             clob_ids = m.get("clobTokenIds", [])
+            if isinstance(clob_ids, str):
+                try:
+                    clob_ids = json.loads(clob_ids)
+                except Exception:
+                    clob_ids = []
             for tid in clob_ids:
                 if tid in token_ids:
                     try:
