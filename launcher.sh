@@ -32,19 +32,21 @@ if [ ! -f "$BOT_DIR/.env" ]; then
     exit 1
 fi
 
-if ! command -v python3 &> /dev/null; then
+PYTHON="/opt/homebrew/bin/python3.14"
+if [ ! -x "$PYTHON" ]; then
+    PYTHON="python3"
+fi
+
+if ! command -v "$PYTHON" &> /dev/null; then
     osascript -e 'display alert "Error" message "Python3 no está instalado." as critical'
     exit 1
 fi
 
-echo "Verificando dependencias..."
-
-# Verificar Ollama si no hay API key de Anthropic
-# Ollama deshabilitado — usando análisis técnico puro sin LLM
-python3 -c "import anthropic, dotenv, requests, binance, pandas, numpy" 2>/dev/null
+echo "Usando $($PYTHON --version)..."
+$PYTHON -c "import anthropic, dotenv, requests, binance, pandas, numpy" 2>/dev/null
 if [ $? -ne 0 ]; then
     osascript -e 'display dialog "Instalando dependencias Python..." buttons {"OK"} default button "OK"'
-    pip3 install anthropic python-dotenv requests python-binance pandas numpy --quiet 2>/dev/null
+    $PYTHON -m pip install anthropic python-dotenv requests python-binance pandas numpy --quiet 2>/dev/null
 fi
 
 # ─── RAG Binance BTC ──────────────────────────────────────────────────────────
@@ -53,66 +55,61 @@ echo "📈 Binance BTC RAG..."
 
 if [ ! -f "$BN_MODEL" ] || [ ! -f "$BN_DB" ]; then
     echo "   Primera vez: descargando 1 año de velas BTC (~3 min)..."
-    python3 btc_rag_pipeline.py >> "$LOG_FILE" 2>&1
+    $PYTHON btc_rag_pipeline.py >> "$LOG_FILE" 2>&1
     echo "   ✓ Setup BTC RAG completo"
 else
     BN_DAYS=$(( ( $(date +%s) - $(date -r "$BN_MODEL" +%s) ) / 86400 ))
     if [ "$BN_DAYS" -ge 7 ]; then
         echo "   🔄 Actualizando BTC RAG en background (${BN_DAYS} días)..."
-        python3 btc_rag_pipeline.py refresh >> "$LOG_FILE" 2>&1 &
+        $PYTHON btc_rag_pipeline.py refresh >> "$LOG_FILE" 2>&1 &
     else
         echo "   ✓ BTC RAG OK (hace ${BN_DAYS} días)"
     fi
 fi
 
+# ─── Local State Server (para dashboard) ─────────────────────────────────────
+echo "Iniciando state server..."
+nohup $PYTHON local_server.py >> "$LOG_FILE" 2>&1 &
+SS_PID=$!
+echo $SS_PID > "$SCRIPT_DIR/.stateserver.pid"
+echo "✓ State server iniciado (PID: $SS_PID) → localhost:8765"
+
 # ─── Lanzar Binance Bot ───────────────────────────────────────────────────────
 echo "Iniciando Binance BTC bot..."
-nohup python3 binance_bot.py >> "$LOG_FILE" 2>&1 &
+nohup $PYTHON binance_bot.py >> "$LOG_FILE" 2>&1 &
 BN_PID=$!
 echo $BN_PID > "$SCRIPT_DIR/.binance.pid"
 echo "✓ Binance bot iniciado (PID: $BN_PID)"
 
-
-# ─── Lanzar Scalping Bot ─────────────────────────────────────────────────────
-echo "Iniciando Scalping BTC 1m bot..."
-nohup python3.14 scalping_bot.py >> "$LOG_FILE" 2>&1 &
-SC_PID=$!
-echo $SC_PID > "$SCRIPT_DIR/.scalping.pid"
-echo "✓ Scalping bot iniciado (PID: $SC_PID)"
-
 # ─── Lanzar Altcoin Bot ──────────────────────────────────────────────────────
 echo "Iniciando Multi-Altcoin bot..."
-nohup python3 altcoin_bot.py >> "$LOG_FILE" 2>&1 &
+nohup $PYTHON altcoin_bot.py >> "$LOG_FILE" 2>&1 &
 ALT_PID=$!
 echo $ALT_PID > "$SCRIPT_DIR/.altcoin.pid"
 echo "✓ Altcoin bot iniciado (PID: $ALT_PID)"
 
-# ─── Lanzar SP500 Bot ────────────────────────────────────────────────────────
-echo "Iniciando SP500 + ETFs bot..."
-if grep -q "ALPACA_API_KEY" "$BOT_DIR/.env" && ! grep -q "ALPACA_API_KEY=tu_" "$BOT_DIR/.env"; then
-    nohup python3 sp500_bot.py >> "$LOG_FILE" 2>&1 &
-    SP_PID=$!
-    echo $SP_PID > "$SCRIPT_DIR/.sp500.pid"
-    echo "✓ SP500 bot iniciado (PID: $SP_PID)"
-    # Symlink para dashboard
-    if [ "$HAS_NODE" = true ]; then
-        mkdir -p "$DASHBOARD_DIR/public/sp500_data"
-        ln -sf "$BOT_DIR/sp500_data/state.json" "$DASHBOARD_DIR/public/sp500_data/state.json" 2>/dev/null
+# ─── WARP VPN (para Polymarket — bloqueado en AR) ────────────────────────────
+WARP_CLI="/usr/local/bin/warp-cli"
+if [ -x "$WARP_CLI" ]; then
+    WARP_STATUS=$("$WARP_CLI" status 2>&1 | grep -i "connected" || true)
+    if [ -z "$WARP_STATUS" ]; then
+        echo "Conectando WARP VPN..."
+        "$WARP_CLI" connect 2>/dev/null
+        sleep 2
+        echo "✓ WARP VPN conectada"
+    else
+        echo "✓ WARP VPN ya conectada"
     fi
 else
-    echo "⚠ SP500 bot saltado (configurá ALPACA_API_KEY en .env)"
+    echo "⚠ WARP no instalado — Polymarket puede fallar (brew install cloudflare-warp)"
 fi
 
-# ─── Lanzar RSI Bot (Alpaca Paper Trading) ───────────────────────────────────
-echo "Iniciando RSI Mean Reversion bot..."
-if python3 -c "import alpaca_trade_api" 2>/dev/null && grep -q "ALPACA_API_KEY" "$BOT_DIR/.env" && ! grep -q "ALPACA_API_KEY=tu_" "$BOT_DIR/.env"; then
-    nohup python3 rsi_bot.py paper >> "$LOG_FILE" 2>&1 &
-    RSI_PID=$!
-    echo $RSI_PID > "$SCRIPT_DIR/.rsi.pid"
-    echo "✓ RSI bot iniciado (PID: $RSI_PID)"
-else
-    echo "⚠ RSI bot saltado (configurá ALPACA_API_KEY en .env)"
-fi
+# ─── Lanzar Polymarket AI Bot ─────────────────────────────────────────────────
+echo "Iniciando Polymarket AI bot..."
+nohup $PYTHON polymarket_bot.py >> "$LOG_FILE" 2>&1 &
+PM_PID=$!
+echo $PM_PID > "$SCRIPT_DIR/.polymarket.pid"
+echo "✓ Polymarket bot iniciado (PID: $PM_PID)"
 
 # ─── Lanzar Dashboard ─────────────────────────────────────────────────────────
 HAS_NODE=false
@@ -120,52 +117,36 @@ if command -v node &> /dev/null && [ -d "$DASHBOARD_DIR/node_modules" ]; then
     HAS_NODE=true
 fi
 
-# ─── Lanzar servidor local de estado ─────────────────────────────────────────
-echo "Iniciando local state server..."
-nohup python3 local_server.py > "$SCRIPT_DIR/state_server.log" 2>&1 &
-SS_PID=$!
-echo $SS_PID > "$SCRIPT_DIR/.stateserver.pid"
-echo "✓ State server iniciado (puerto 8765)"
-
 if [ "$HAS_NODE" = true ]; then
     echo "Iniciando dashboard..."
     cd "$DASHBOARD_DIR"
-    nohup npm run dev -- --port 5174 > "$SCRIPT_DIR/dashboard.log" 2>&1 &
+    nohup npm run dev -- --port 5173 > "$SCRIPT_DIR/dashboard.log" 2>&1 &
     DASH_PID=$!
     echo $DASH_PID > "$SCRIPT_DIR/.dashboard.pid"
     sleep 3
-    open "http://localhost:5174"
-    echo "✓ Dashboard iniciado → http://localhost:5174"
+    open "http://localhost:5173"
+    echo "✓ Dashboard iniciado → http://localhost:5173"
 fi
 
 echo ""
 echo "✅ Todo corriendo!"
-echo "   Binance BTC: ciclos cada 3 min"
-echo "   Trading2:    ciclos cada 5 min (MACD + RSI+VWAP + CVD, modo VOTE)"
-echo "   Altcoins:    ciclos cada 15 min (top 20 por volumen)"
-echo "   SP500+ETFs:  ciclos cada 5 min (mercado abierto)"
-echo "   RSI S&P500:  opera al cierre del mercado US"
+echo "   Binance BTC:  ciclos cada 15 min"
+echo "   Altcoins:     ciclos cada 15 min (top 20 por volumen)"
+echo "   Polymarket:   ciclos cada 10 min (mercados de prediccion)"
 echo "   Log: tail -f $LOG_FILE"
 echo ""
 
-osascript -e 'display notification "Binance + Altcoins + RSI Bot iniciados" with title "Trading Bot HQ" subtitle "Dashboard en localhost:5174"'
+osascript -e 'display notification "Binance + Altcoins + Polymarket iniciados" with title "Trading Bot HQ" subtitle "Dashboard en localhost:5173"'
 tail -f "$LOG_FILE"
 
 # ─── Sincronizar paper trading state con dashboard ────────────────────────────
-# ─── Lanzar servidor local de estado ─────────────────────────────────────────
-echo "Iniciando local state server..."
-nohup python3 local_server.py > "$SCRIPT_DIR/state_server.log" 2>&1 &
-SS_PID=$!
-echo $SS_PID > "$SCRIPT_DIR/.stateserver.pid"
-echo "✓ State server iniciado (puerto 8765)"
-
 if [ "$HAS_NODE" = true ]; then
     mkdir -p "$DASHBOARD_DIR/public/paper_trading"
     # Symlinks para que Vite sirva los JSON del paper trading
-    ln -sf "$BOT_DIR/paper_trading/binance_state.json"  "$DASHBOARD_DIR/public/paper_trading/binance_state.json"  2>/dev/null
+    ln -sf "$BOT_DIR/paper_trading/binance_state.json" "$DASHBOARD_DIR/public/paper_trading/binance_state.json" 2>/dev/null
     mkdir -p "$DASHBOARD_DIR/public/rsi_bot_data"
-    ln -sf "$BOT_DIR/rsi_bot_data/state.json"  "$DASHBOARD_DIR/public/rsi_bot_data/state.json"  2>/dev/null
+    ln -sf "$BOT_DIR/rsi_bot_data/state.json" "$DASHBOARD_DIR/public/rsi_bot_data/state.json" 2>/dev/null
         mkdir -p "$DASHBOARD_DIR/public/altcoin_data"
-    ln -sf "$BOT_DIR/altcoin_data/state.json"  "$DASHBOARD_DIR/public/altcoin_data/state.json"  2>/dev/null
+    ln -sf "$BOT_DIR/altcoin_data/state.json" "$DASHBOARD_DIR/public/altcoin_data/state.json" 2>/dev/null
     echo "✓ Paper trading states vinculados al dashboard"
 fi

@@ -27,7 +27,7 @@ from py_clob_client.client import ClobClient
 from py_clob_client.clob_types import OrderArgs, MarketOrderArgs, OrderType
 from py_clob_client.order_builder.constants import BUY, SELL
 
-load_dotenv()
+load_dotenv(override=True)
 
 # ─── Paper Trading ────────────────────────────────────────────────────────────
 from paper_trading import get_polymarket_engine
@@ -45,6 +45,11 @@ ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 PRIVATE_KEY = os.getenv("POLYMARKET_PRIVATE_KEY")
 FUNDER = os.getenv("POLYMARKET_FUNDER")          # solo si usás Magic wallet
 SIGNATURE_TYPE = int(os.getenv("POLYMARKET_SIGNATURE_TYPE", "0"))
+
+# Proxy/VPN — Polymarket bloqueado en AR
+# Configurar en .env: HTTPS_PROXY=socks5://127.0.0.1:1080  (o http://...)
+PROXY = os.getenv("HTTPS_PROXY") or os.getenv("POLYMARKET_PROXY")
+PROXIES = {"https": PROXY, "http": PROXY} if PROXY else None
 
 # Parámetros del bot
 MAX_BET_USDC = float(os.getenv("MAX_BET_USDC", "10"))        # máximo por apuesta en USDC
@@ -77,13 +82,6 @@ class TradeSignal:
     edge: float        # diferencia entre AI prob y market prob
     reasoning: str
     confidence: str    # "HIGH", "MEDIUM", "LOW"
-
-@dataclass
-class BotState:
-    open_positions: list = field(default_factory=list)
-    trades_executed: int = 0
-    total_pnl: float = 0.0
-    last_run: str = ""
 
 # ─── Clientes ─────────────────────────────────────────────────────────────────
 
@@ -124,6 +122,7 @@ def fetch_active_markets(limit: int = 50, min_volume: float = 10000) -> list[Mar
             f"{GAMMA_API}/markets",
             params={"active": "true", "closed": "false", "limit": limit, "order": "volume", "ascending": "false"},
             headers={"Accept": "application/json"},
+            proxies=PROXIES,
             timeout=30
         )
         resp.raise_for_status()
@@ -134,7 +133,7 @@ def fetch_active_markets(limit: int = 50, min_volume: float = 10000) -> list[Mar
         # Reintentar una vez
         try:
             time.sleep(5)
-            resp = requests.get(f"{GAMMA_API}/markets", params={"active": "true", "closed": "false", "limit": limit, "order": "volume", "ascending": "false"}, headers={"Accept": "application/json"}, timeout=30)
+            resp = requests.get(f"{GAMMA_API}/markets", params={"active": "true", "closed": "false", "limit": limit, "order": "volume", "ascending": "false"}, headers={"Accept": "application/json"}, proxies=PROXIES, timeout=30)
             resp.raise_for_status()
             raw = resp.json()
             log.info(f"  → Reintento exitoso: {len(raw)} registros")
@@ -366,142 +365,180 @@ def execute_trade(signal: TradeSignal, client: ClobClient, balance: float) -> di
         log.error(f"  ❌ Error ejecutando orden: {e}")
         return {"success": False, "error": str(e)}
 
+# ─── Fetch current prices for open positions ─────────────────────────────────
+
+def fetch_position_prices(engine) -> dict:
+    """Fetch current YES prices for all open positions via Gamma API."""
+    price_map = {}
+    open_pos = engine.state.get("open_positions", [])
+    if not open_pos:
+        return price_map
+
+    token_ids = [p["token_id"] for p in open_pos]
+    try:
+        # Gamma API: fetch markets and match by clobTokenIds
+        resp = requests.get(
+            f"{GAMMA_API}/markets",
+            params={"active": "true", "closed": "false", "limit": 100, "order": "volume", "ascending": "false"},
+            headers={"Accept": "application/json"},
+            proxies=PROXIES,
+            timeout=30
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+
+        for m in raw:
+            clob_ids = m.get("clobTokenIds", [])
+            for tid in clob_ids:
+                if tid in token_ids:
+                    try:
+                        outcome_prices = json.loads(m.get("outcomePrices", "[0.5, 0.5]") or "[0.5, 0.5]")
+                        yes_price = float(outcome_prices[0])
+                    except Exception:
+                        yes_price = float(m.get("lastTradePrice", 0.5) or 0.5)
+
+                    # If position is YES, price is yes_price; if NO, price is 1 - yes_price
+                    pos = next((p for p in open_pos if p["token_id"] == tid), None)
+                    if pos:
+                        if pos["side"] == "YES":
+                            price_map[tid] = yes_price
+                        else:
+                            price_map[tid] = 1.0 - yes_price
+    except Exception as e:
+        log.warning(f"Error fetching position prices: {e}")
+
+    return price_map
+
+
 # ─── Loop Principal ────────────────────────────────────────────────────────────
 
-# Paper engine global (persiste entre ciclos)
-_paper_pm = None
+# Engine global (persiste entre ciclos)
+_engine = None
 
-def get_paper_engine():
-    global _paper_pm
-    if _paper_pm is None:
-        _paper_pm = get_polymarket_engine(initial_capital=300.0)
-    return _paper_pm
+def get_engine():
+    global _engine
+    if _engine is None:
+        _engine = get_polymarket_engine(initial_capital=300.0)
+    return _engine
 
-def run_bot_cycle(state: BotState) -> BotState:
+def run_bot_cycle():
     """Un ciclo completo del bot."""
+    engine = get_engine()
+
     log.info(f"\n{'#'*60}")
-    log.info(f"BOT CYCLE — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    log.info(f"POLYMARKET CYCLE — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    log.info(f"Capital: ${engine.state['current_capital']:.2f} | Posiciones: {len(engine.state['open_positions'])}")
     log.info(f"{'#'*60}")
 
-    # 1. Verificar balance
-    try:
-        auth_client = get_clob_client(authenticated=not DRY_RUN)
-        if not DRY_RUN:
-            balance_info = auth_client.get_balance_allowance()
-            balance = float(balance_info.get("balance", 0))
-        else:
-            balance = 1000.0  # balance ficticio en dry run
-        log.info(f"Balance disponible: ${balance:.2f} USDC")
-    except Exception as e:
-        log.error(f"Error al obtener balance: {e}")
-        balance = 0
-        auth_client = get_clob_client(authenticated=False)
+    # 1. Monitor existing positions — check exits
+    open_pos = engine.state.get("open_positions", [])
+    if open_pos:
+        log.info(f"\nMonitoreando {len(open_pos)} posiciones abiertas...")
+        price_map = fetch_position_prices(engine)
+        if price_map:
+            engine.check_exits(price_map)
+            for pos in engine.state["open_positions"]:
+                tid = pos["token_id"]
+                if tid in price_map:
+                    log.info(f"  {pos['question'][:50]}... | {pos['side']} @ {pos['entry_price']:.2f} → {pos['current_price']:.2f} | P&L {pos['unrealized_pnl_pct']:+.1f}%")
 
-    if balance < 5 and not DRY_RUN:
-        log.warning("Balance insuficiente (<$5). Abortando ciclo.")
-        return state
+    # 2. Check if we can open new positions
+    open_count = len(engine.state.get("open_positions", []))
+    if open_count >= MAX_OPEN_POSITIONS:
+        log.info(f"Max posiciones alcanzado ({MAX_OPEN_POSITIONS}). Solo monitoreo.")
+        engine.add_log(f"Ciclo: monitoreo | {open_count} posiciones abiertas")
+        engine.save()
+        return
 
-    # 2. Verificar límite de posiciones abiertas
-    if len(state.open_positions) >= MAX_OPEN_POSITIONS:
-        log.info(f"Máximo de posiciones abiertas alcanzado ({MAX_OPEN_POSITIONS}). Saltando.")
-        return state
-
-    # 3. Traer mercados
+    # 3. Fetch markets
     markets = fetch_active_markets(limit=50, min_volume=1000)
     if not markets:
         log.warning("No se encontraron mercados.")
-        return state
+        engine.add_log("Ciclo: 0 mercados encontrados")
+        engine.save()
+        return
 
-    # 4. Analizar con Claude y filtrar señales
+    engine.state["markets_scanned"] = len(markets)
+
+    # 4. Filter: skip markets where we already have a position
+    open_tokens = {p["token_id"] for p in engine.state.get("open_positions", [])}
+    markets_to_analyze = [m for m in markets if m.token_id not in open_tokens][:20]
+
+    # 5. Analyze with Claude
     signals = []
-    log.info(f"\nAnalizando {len(markets)} mercados con Claude...")
+    log.info(f"\nAnalizando {len(markets_to_analyze)} mercados con Claude...")
 
-    for market in markets[:20]:  # analizar máx 20 por ciclo para no gastar tokens
-        # Saltear si ya tenemos posición abierta en este mercado
-        if any(p.get("token_id") == market.token_id for p in state.open_positions):
-            continue
-
+    for market in markets_to_analyze:
         log.info(f"  Analizando: {market.question[:70]}...")
         signal = analyze_market_with_claude(market)
-
         if signal:
             signals.append(signal)
-            log.info(f"    ✓ SEÑAL: {signal.side} | Edge: {signal.edge:+.1%} | Confianza: {signal.confidence}")
+            log.info(f"    SENAL: {signal.side} | Edge: {signal.edge:+.1%} | Confianza: {signal.confidence}")
+        time.sleep(0.5)
 
-        time.sleep(0.5)  # throttle para no abusar la API
-
-    # 5. Rankear señales por edge * confianza
+    # 6. Rank signals
     confidence_weight = {"HIGH": 1.0, "MEDIUM": 0.6, "LOW": 0.2}
     signals.sort(
         key=lambda s: abs(s.edge) * confidence_weight.get(s.confidence, 0.1),
         reverse=True
     )
 
-    log.info(f"\n{len(signals)} señales detectadas")
+    engine.state["signals_found"] = len(signals)
+    log.info(f"\n{len(signals)} senales detectadas")
 
-    # 6. Ejecutar las mejores señales
-    slots_available = MAX_OPEN_POSITIONS - len(state.open_positions)
+    # 7. Execute best signals via paper engine
+    slots = MAX_OPEN_POSITIONS - open_count
     executed = 0
 
-    for signal in signals[:slots_available]:
+    for signal in signals[:slots]:
         if signal.confidence == "LOW":
-            log.info(f"  Saltando señal LOW confidence: {signal.market.question[:50]}...")
             continue
 
-        result = execute_trade(signal, auth_client, balance)
-
-        if result.get("dry_run") or result.get("success"):
-            state.open_positions.append({
-                "token_id": signal.market.token_id,
-                "question": signal.market.question,
-                "side": signal.side,
-                "price": signal.price,
-                "size": result.get("size", 0),
-                "timestamp": datetime.now().isoformat(),
-            })
-            state.trades_executed += 1
+        # Paper trade via engine
+        pos = engine.open_trade(signal)
+        if pos:
             executed += 1
-            balance -= result.get("size", 0)
+            log.info(f"  [PAPER] {signal.side} {signal.market.question[:45]}... @ {signal.price:.2f} | ${pos['size_usdc']:.2f}")
 
-            # Registrar en paper trading
-            if DRY_RUN:
-                paper = get_paper_engine()
-                paper.open_polymarket_trade(signal)
-                paper.update_market_data()
-                log.info(f"  [PAPER] Capital: ${paper.state.current_capital:.2f} | P&L: {paper.state.total_pnl:+.2f} | Win: {paper.state.win_rate:.0f}%")
+        # Real trade (if not DRY_RUN)
+        if not DRY_RUN:
+            try:
+                auth_client = get_clob_client(authenticated=True)
+                execute_trade(signal, auth_client, engine.state["current_capital"])
+            except Exception as e:
+                log.error(f"Error en trade real: {e}")
 
-    log.info(f"\nCiclo completo. Ejecutadas: {executed} órdenes. Total histórico: {state.trades_executed}")
-    state.last_run = datetime.now().isoformat()
-    return state
+    # 8. Log cycle summary
+    summary = f"Ciclo: {len(markets)} mercados | {len(signals)} senales | {executed} trades | Capital ${engine.state['current_capital']:.2f}"
+    engine.add_log(summary)
+    engine.save()
 
-def run_forever(interval_minutes: int = 30):
+    log.info(f"\n{summary}")
+
+def run_forever(interval_minutes: int = 10):
     """Corre el bot en loop cada N minutos."""
-    state = BotState()
-    log.info(f"🤖 Polymarket AI Bot iniciado")
-    log.info(f"   Modo: {'DRY RUN (simulación)' if DRY_RUN else '⚠️  REAL — cuidado con tu dinero'}")
+    log.info(f"Polymarket AI Bot iniciado")
+    log.info(f"   Modo: {'DRY RUN (simulacion)' if DRY_RUN else 'REAL'}")
     log.info(f"   Intervalo: {interval_minutes} min | Max bet: ${MAX_BET_USDC} | Min edge: {MIN_EDGE:.0%}")
 
     while True:
         try:
-            state = run_bot_cycle(state)
+            run_bot_cycle()
         except KeyboardInterrupt:
-            log.info("\n🛑 Bot detenido por el usuario")
+            log.info("\nBot detenido por el usuario")
             break
         except Exception as e:
             log.error(f"Error inesperado en ciclo: {e}", exc_info=True)
 
-        log.info(f"\n⏰ Próximo ciclo en {interval_minutes} minutos...")
+        log.info(f"\nProximo ciclo en {interval_minutes} minutos...")
         time.sleep(interval_minutes * 60)
 
 # ─── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     import sys
-    # Modo: python polymarket_bot.py          → loop continuo
-    # Modo: python polymarket_bot.py once     → un solo ciclo
     if len(sys.argv) > 1 and sys.argv[1] == "once":
-        state = BotState()
-        run_bot_cycle(state)
+        run_bot_cycle()
     else:
-        interval = int(os.getenv("INTERVAL_MINUTES", "30"))
+        interval = int(os.getenv("INTERVAL_MINUTES", "10"))
         run_forever(interval)

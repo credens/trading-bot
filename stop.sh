@@ -3,28 +3,24 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo "🛑 Deteniendo Trading Bot HQ..."
 
-for pidfile in .altcoin.pid .binance.pid .trading2.pid .dashboard.pid .bot.pid .sp500.pid .stateserver.pid .rsi.pid .scalping.pid; do
+for pidfile in .altcoin.pid .binance.pid .polymarket.pid .dashboard.pid .bot.pid; do
     if [ -f "$SCRIPT_DIR/$pidfile" ]; then
         PID=$(cat "$SCRIPT_DIR/$pidfile")
         kill $PID 2>/dev/null && echo "✓ Detenido PID $PID ($pidfile)"
-        rm -f "$SCRIPT_DIR/$pidfile"
+        rm "$SCRIPT_DIR/$pidfile"
     fi
 done
 
-# pkill por nombre como fallback (por si el PID file no existe)
-pkill -f "scalping_bot.py" 2>/dev/null && echo "✓ scalping_bot"
-pkill -f "binance_bot.py"  2>/dev/null && echo "✓ binance_bot"
-pkill -f "trading2.py"    2>/dev/null && echo "✓ trading2"
-pkill -f "altcoin_bot.py" 2>/dev/null && echo "✓ altcoin_bot"
-pkill -f "local_server.py" 2>/dev/null && echo "✓ local_server"
-pkill -f "sp500_bot.py"   2>/dev/null && echo "✓ sp500_bot"
-pkill -f "server.py"      2>/dev/null && echo "✓ server"
+pkill -f "binance_bot.py" 2>/dev/null
+pkill -f "altcoin_bot.py" 2>/dev/null
+pkill -f "polymarket_bot.py" 2>/dev/null
+pkill -f "vite.*5174" 2>/dev/null
 
-# Vite dashboard — cualquier puerto
-pkill -f "vite" 2>/dev/null && echo "✓ vite dashboard"
+# Desconectar WARP VPN
+WARP_CLI="/usr/local/bin/warp-cli"
+if [ -x "$WARP_CLI" ]; then
+    "$WARP_CLI" disconnect 2>/dev/null && echo "✓ WARP VPN desconectada"
+fi
 
-# Ollama
-pkill -x "ollama" 2>/dev/null && echo "✓ ollama"
-
-osascript -e 'display notification "Trading Bot HQ detenido" with title "Trading Bot"' 2>/dev/null
+osascript -e 'display notification "Binance + Altcoins + Polymarket detenidos" with title "Trading Bot HQ"'
 echo "✅ Todo detenido."

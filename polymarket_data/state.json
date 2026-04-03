@@ -1,0 +1,170 @@
+{
+  "bot": "polymarket",
+  "initial_capital": 300.0,
+  "current_capital": 300.0,
+  "total_pnl": 0.0,
+  "total_pnl_pct": 0.0,
+  "win_rate": 0.0,
+  "total_trades": 0,
+  "peak_capital": 300.0,
+  "max_drawdown": 0.0,
+  "open_positions": [],
+  "closed_trades": [],
+  "cycle_log": [
+    {
+      "time": "10:37:10",
+      "msg": "Ciclo: 26 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:35:55",
+      "msg": "Ciclo: 26 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:34:40",
+      "msg": "Ciclo: 27 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:33:25",
+      "msg": "Ciclo: 27 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:32:11",
+      "msg": "Ciclo: 26 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:30:57",
+      "msg": "Ciclo: 26 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:29:42",
+      "msg": "Ciclo: 26 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:28:27",
+      "msg": "Ciclo: 25 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:27:12",
+      "msg": "Ciclo: 25 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:25:56",
+      "msg": "Ciclo: 24 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:24:41",
+      "msg": "Ciclo: 24 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:23:27",
+      "msg": "Ciclo: 24 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:22:12",
+      "msg": "Ciclo: 25 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:20:56",
+      "msg": "Ciclo: 25 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:19:42",
+      "msg": "Ciclo: 0 mercados encontrados"
+    },
+    {
+      "time": "10:19:06",
+      "msg": "Ciclo: 24 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "10:17:52",
+      "msg": "Ciclo: 0 mercados encontrados"
+    },
+    {
+      "time": "09:51:29",
+      "msg": "Ciclo: 27 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "00:05:01",
+      "msg": "Ciclo: 25 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "21:57:17",
+      "msg": "Ciclo: 31 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "21:56:03",
+      "msg": "Ciclo: 31 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "21:54:48",
+      "msg": "Ciclo: 31 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "21:53:34",
+      "msg": "Ciclo: 29 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "21:52:20",
+      "msg": "Ciclo: 29 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "21:51:06",
+      "msg": "Ciclo: 28 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "21:49:52",
+      "msg": "Ciclo: 28 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "20:26:11",
+      "msg": "Ciclo: 28 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "20:24:21",
+      "msg": "Ciclo: 0 mercados encontrados"
+    },
+    {
+      "time": "20:22:55",
+      "msg": "Ciclo: 27 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "20:21:45",
+      "msg": "Ciclo: 27 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "20:20:35",
+      "msg": "Ciclo: 27 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "20:19:24",
+      "msg": "Ciclo: 27 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "20:18:14",
+      "msg": "Ciclo: 25 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "20:17:04",
+      "msg": "Ciclo: 25 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "20:15:54",
+      "msg": "Ciclo: 25 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "20:14:43",
+      "msg": "Ciclo: 26 mercados | 0 senales | 0 trades | Capital $300.00"
+    },
+    {
+      "time": "20:12:58",
+      "msg": "Ciclo: 0 mercados encontrados"
+    },
+    {
+      "time": "20:10:53",
+      "msg": "Ciclo: 0 mercados encontrados"
+    }
+  ],
+  "markets_scanned": 26,
+  "signals_found": 0,
+  "last_updated": "2026-04-03T10:37:10.495620"
+}
