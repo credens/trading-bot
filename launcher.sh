@@ -81,6 +81,13 @@ BN_PID=$!
 echo $BN_PID > "$SCRIPT_DIR/.binance.pid"
 echo "✓ Binance bot iniciado (PID: $BN_PID)"
 
+# ─── Lanzar Scalping Bot ─────────────────────────────────────────────────────
+echo "Iniciando Scalping BTC 1m bot..."
+nohup $PYTHON scalping_bot.py >> "$LOG_FILE" 2>&1 &
+SC_PID=$!
+echo $SC_PID > "$SCRIPT_DIR/.scalping.pid"
+echo "✓ Scalping bot iniciado (PID: $SC_PID)"
+
 # ─── Lanzar Altcoin Bot ──────────────────────────────────────────────────────
 echo "Iniciando Multi-Altcoin bot..."
 nohup $PYTHON altcoin_bot.py >> "$LOG_FILE" 2>&1 &

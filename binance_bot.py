@@ -758,10 +758,12 @@ def run_strategies(client, current_position: str, capital: float, scenario=None)
     size_long = get_size("LONG", scenario, "bn")
 
     if long_v >= threshold_long and size_long > 0:
-        # Si es 1/3 HIGH, verificar confianza
+        # Si es 1/3, verificar confianza — MEDIUM basta si va con la tendencia
         if long_v == 1:
             long_rs = [r for r in [r1, r2, r3] if r["decision"] == "LONG"]
-            if not (long_rs and long_rs[0].get("confidence") == "HIGH"):
+            min_conf = "MEDIUM" if direction == "bullish" else "HIGH"
+            conf_ok = long_rs and long_rs[0].get("confidence", "LOW") in (["HIGH"] if min_conf == "HIGH" else ["HIGH", "MEDIUM"])
+            if not conf_ok:
                 long_v = 0  # no pasa el filtro
         if long_v >= 1:
             conf = "HIGH" if long_v >= 3 else "MEDIUM"
@@ -780,7 +782,10 @@ def run_strategies(client, current_position: str, capital: float, scenario=None)
     if short_v >= threshold_short and size_short > 0:
         if short_v == 1:
             short_rs = [r for r in [r1, r2, r3] if r["decision"] == "SHORT"]
-            if not (short_rs and short_rs[0].get("confidence") == "HIGH"):
+            # Si va con la tendencia (SHORT en bearish), MEDIUM basta
+            min_conf = "MEDIUM" if direction == "bearish" else "HIGH"
+            conf_ok = short_rs and short_rs[0].get("confidence", "LOW") in (["HIGH"] if min_conf == "HIGH" else ["HIGH", "MEDIUM"])
+            if not conf_ok:
                 short_v = 0
         if short_v >= 1:
             conf = "HIGH" if short_v >= 3 else "MEDIUM"

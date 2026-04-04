@@ -60,6 +60,8 @@ function BTCChart({ entryPrice, side, stopLoss, takeProfit, defaultInterval = "1
   const [visibleCount, setVisibleCount] = useState(80);
   const [panOffset, setPanOffset] = useState(0);
   const [yZoom, setYZoom] = useState(1);  // 1 = auto-fit, >1 = zoomed in
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStart = useRef(null);
   const chartRef = useRef(null);
   const W = 560, H = 180, PAD = 8, YLAB = 40;
   const RSI_H = 55, MACD_H = 55, TIME_H = 18;
@@ -118,6 +120,28 @@ function BTCChart({ entryPrice, side, stopLoss, takeProfit, defaultInterval = "1
     return () => el.removeEventListener("wheel", handler);
   }, [allCandles.length, visibleCount]);
 
+  // Drag to pan
+  useEffect(() => {
+    const el = chartRef.current;
+    if (!el) return;
+    const onDown = (e) => { dragStart.current = { x: e.clientX, offset: panOffset }; setIsDragging(true); };
+    const onMove = (e) => {
+      if (!dragStart.current) return;
+      const dx = e.clientX - dragStart.current.x;
+      const candleW = el.getBoundingClientRect().width / visibleCount;
+      const shift = Math.round(dx / candleW);
+      if (shift !== 0) {
+        const newOffset = Math.max(0, Math.min(dragStart.current.offset + shift, allCandles.length - visibleCount));
+        setPanOffset(newOffset);
+      }
+    };
+    const onUp = () => { dragStart.current = null; setIsDragging(false); };
+    el.addEventListener("mousedown", onDown);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => { el.removeEventListener("mousedown", onDown); window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
+  }, [allCandles.length, visibleCount, panOffset]);
+
   // Slice candles for current view
   const startIdx = Math.max(0, allCandles.length - visibleCount - panOffset);
   const candles = allCandles.slice(startIdx, startIdx + visibleCount);
@@ -126,10 +150,9 @@ function BTCChart({ entryPrice, side, stopLoss, takeProfit, defaultInterval = "1
 
   // ── Candlestick geometry ─────────────────────────────────────────────────────
   const prices = candles.flatMap(c => [c.h, c.l]);
-  // Extend range to include SL/TP/entry if they exist
+  // Extend range to include SL/entry if they exist (not TP — it stretches the chart too much)
   if (entryPrice) prices.push(entryPrice);
   if (stopLoss) prices.push(stopLoss);
-  if (takeProfit) prices.push(takeProfit);
   const rawMinP = Math.min(...prices), rawMaxP = Math.max(...prices);
   const rawRange = rawMaxP - rawMinP || 1;
   const midP = (rawMaxP + rawMinP) / 2;
@@ -176,7 +199,7 @@ function BTCChart({ entryPrice, side, stopLoss, takeProfit, defaultInterval = "1
   const xCenter = i => YLAB + i * cW + cW / 2;
 
   return (
-    <div ref={chartRef} style={{ marginBottom:14, cursor:"default" }}>
+    <div ref={chartRef} style={{ marginBottom:14, cursor: isDragging ? "grabbing" : "grab", userSelect:"none" }}>
       <div style={{ display:"flex", gap:4, marginBottom:6, alignItems:"center" }}>
         {["1m","5m","15m","1h"].map(iv => (
           <button key={iv} onClick={()=>setIntervalVal(iv)} style={{ background:interval===iv?"rgba(255,184,0,0.15)":"transparent", border:`1px solid ${interval===iv?"#ffb80055":"#333"}`, color:interval===iv?"#ffb800":"#bbb", borderRadius:5, padding:"3px 8px", fontSize:10, cursor:"pointer", fontFamily:"monospace" }}>{iv}</button>
@@ -217,13 +240,7 @@ function BTCChart({ entryPrice, side, stopLoss, takeProfit, defaultInterval = "1
             <text x={W-PAD-4} y={toY(stopLoss)+1} fill="#ff4444" fontSize="8" fontWeight="bold" textAnchor="end">SL ${stopLoss>=1000?(stopLoss/1000).toFixed(2)+"k":stopLoss.toFixed(2)}</text>
           </>
         )}
-        {takeProfit && takeProfit >= minP && takeProfit <= maxP && (
-          <>
-            <line x1={PAD+36} y1={toY(takeProfit)} x2={W-PAD} y2={toY(takeProfit)} stroke="#00ff88" strokeWidth="1.2" strokeDasharray="2,3" />
-            <rect x={W-PAD-52} y={toY(takeProfit)-8} width={50} height={12} rx={3} fill="#00ff8833" />
-            <text x={W-PAD-4} y={toY(takeProfit)+1} fill="#00ff88" fontSize="8" fontWeight="bold" textAnchor="end">TP ${takeProfit>=1000?(takeProfit/1000).toFixed(2)+"k":takeProfit.toFixed(2)}</text>
-          </>
-        )}
+        {/* TP line removed — stretches Y-axis too much when far from current price */}
         {candles.map((c,i) => {
           const x = YLAB + i*cW + cW*0.1, w = cW*0.8, cx = xCenter(i);
           const bullish = c.c >= c.o, color = bullish?"#00ff88":"#ff4444";

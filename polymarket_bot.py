@@ -421,6 +421,69 @@ def fetch_position_prices(engine) -> dict:
     return price_map
 
 
+# ─── Check resolved/closed markets ────────────────────────────────────────────
+
+def fetch_resolved_markets(engine) -> dict:
+    """Check if any open positions are on resolved/closed markets.
+    Returns: {token_id: {"outcome": "YES"|"NO"}} for resolved markets."""
+    resolved = {}
+    open_pos = engine.state.get("open_positions", [])
+    if not open_pos:
+        return resolved
+
+    token_ids = {p["token_id"] for p in open_pos}
+    # Build slug lookup from positions
+    slug_map = {}
+    for p in open_pos:
+        slug_map[p.get("token_id")] = p.get("question", "")
+
+    try:
+        # Fetch closed/resolved markets from Gamma API
+        resp = requests.get(
+            f"{GAMMA_API}/markets",
+            params={"closed": "true", "limit": 200, "order": "endDate", "ascending": "false"},
+            headers={"Accept": "application/json"},
+            proxies=PROXIES,
+            timeout=30
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+
+        for m in raw:
+            clob_ids = m.get("clobTokenIds", [])
+            if isinstance(clob_ids, str):
+                try:
+                    clob_ids = json.loads(clob_ids)
+                except Exception:
+                    clob_ids = []
+
+            for tid in clob_ids:
+                if tid in token_ids:
+                    # Market is closed — determine outcome
+                    outcome_prices = m.get("outcomePrices", "")
+                    try:
+                        prices = json.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
+                        yes_price = float(prices[0])
+                    except Exception:
+                        yes_price = 0.5
+
+                    # If YES price is > 0.95, YES won; if < 0.05, NO won
+                    if yes_price > 0.95:
+                        resolved[tid] = {"outcome": "YES"}
+                    elif yes_price < 0.05:
+                        resolved[tid] = {"outcome": "NO"}
+                    else:
+                        # Market closed but unclear resolution — close at current price
+                        resolved[tid] = {"outcome": "YES" if yes_price >= 0.5 else "NO"}
+
+                    log.info(f"  Mercado resuelto encontrado: {m.get('question', '?')[:50]}... → outcome prices: {outcome_prices}")
+
+    except Exception as e:
+        log.warning(f"Error checking resolved markets: {e}")
+
+    return resolved
+
+
 # ─── Loop Principal ────────────────────────────────────────────────────────────
 
 # Engine global (persiste entre ciclos)
@@ -440,6 +503,19 @@ def run_bot_cycle():
     log.info(f"POLYMARKET CYCLE — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     log.info(f"Capital: ${engine.state['current_capital']:.2f} | Posiciones: {len(engine.state['open_positions'])}")
     log.info(f"{'#'*60}")
+
+    # 0. Check expired and resolved positions FIRST
+    open_pos = engine.state.get("open_positions", [])
+    if open_pos:
+        # Check expired by end_date
+        log.info(f"\nVerificando mercados expirados/resueltos...")
+        engine.check_expired()
+
+        # Check resolved via Gamma API (markets that closed)
+        resolved = fetch_resolved_markets(engine)
+        if resolved:
+            engine.close_resolved(resolved)
+            log.info(f"  Cerradas {len(resolved)} posiciones en mercados resueltos")
 
     # 1. Monitor existing positions — check exits
     open_pos = engine.state.get("open_positions", [])

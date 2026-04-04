@@ -3,7 +3,7 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo "🛑 Deteniendo Trading Bot HQ..."
 
-for pidfile in .altcoin.pid .binance.pid .polymarket.pid .stateserver.pid .dashboard.pid .bot.pid; do
+for pidfile in .altcoin.pid .binance.pid .scalping.pid .polymarket.pid .stateserver.pid .dashboard.pid .bot.pid; do
     if [ -f "$SCRIPT_DIR/$pidfile" ]; then
         PID=$(cat "$SCRIPT_DIR/$pidfile")
         kill $PID 2>/dev/null && echo "✓ Detenido PID $PID ($pidfile)"
@@ -12,6 +12,7 @@ for pidfile in .altcoin.pid .binance.pid .polymarket.pid .stateserver.pid .dashb
 done
 
 pkill -f "binance_bot.py" 2>/dev/null
+pkill -f "scalping_bot.py" 2>/dev/null
 pkill -f "altcoin_bot.py" 2>/dev/null
 pkill -f "polymarket_bot.py" 2>/dev/null
 pkill -f "local_server.py" 2>/dev/null

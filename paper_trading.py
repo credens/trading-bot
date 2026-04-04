@@ -277,6 +277,84 @@ def get_binance_engine(initial_capital: float = 500.0) -> PaperTradingEngine:
     return PaperTradingEngine("binance", initial_capital, BINANCE_STATE)
 
 
+SCALPING_STATE = STATE_DIR / "scalping_state.json"
+
+def get_scalping_engine(initial_capital: float = 500.0) -> PaperTradingEngine:
+    return PaperTradingEngine("scalping", initial_capital, SCALPING_STATE)
+
+
+# ─── Scalping-specific methods (monkey-patched onto PaperTradingEngine) ──────
+
+def _open_scalping_trade(self, decision: dict, current_price: float, capital: float, leverage: int):
+    side = decision["decision"]
+    pos_pct = min(float(decision.get("position_size_pct", 0.08)), 0.10)
+    sl_pct  = float(decision.get("stop_loss_pct", 0.004))
+    tp_pct  = float(decision.get("take_profit_pct", 0.008))
+    size    = round(capital * pos_pct, 2)
+    tid = f"SC-{datetime.now().strftime('%H%M%S')}"
+    if side == "LONG":
+        sl = round(current_price * (1 - sl_pct), 2)
+        tp = round(current_price * (1 + tp_pct), 2)
+    else:
+        sl = round(current_price * (1 + sl_pct), 2)
+        tp = round(current_price * (1 - tp_pct), 2)
+    trade = Trade(
+        id=tid, bot="scalping", side=side,
+        entry_price=current_price, entry_time=datetime.now().isoformat(),
+        size=size, stop_loss=sl, take_profit=tp,
+        reasoning=decision.get("reasoning", ""),
+        confidence=decision.get("confidence", ""),
+        leverage=leverage,
+    )
+    self.state.open_trades.append(trade)
+    self.state.current_capital -= size
+    self.state.trades_today += 1
+    self.save()
+    msg = f"SCALP {side} | entrada ${current_price:,.0f} | SL ${sl:,.0f} | TP ${tp:,.0f} | size ${size:.0f}"
+    self.add_log(msg)
+    log.info(f"  [SCALP] {msg}")
+    return trade
+
+def _check_scalping_stops(self, current_price: float):
+    closed = []
+    for trade in self.state.open_trades:
+        if trade.bot != "scalping":
+            continue
+        hit_sl = hit_tp = False
+        if trade.side == "LONG":
+            hit_sl = current_price <= trade.stop_loss
+            hit_tp = current_price >= trade.take_profit
+        else:
+            hit_sl = current_price >= trade.stop_loss
+            hit_tp = current_price <= trade.take_profit
+        if hit_sl or hit_tp:
+            reason = "STOP_LOSS" if hit_sl else "TAKE_PROFIT"
+            self._close_binance_trade(trade, trade.stop_loss if hit_sl else trade.take_profit, reason)
+            closed.append(trade)
+    for t in closed:
+        self.state.open_trades.remove(t)
+    if closed:
+        self.save()
+
+def _get_scalping_position(self):
+    for t in self.state.open_trades:
+        if t.bot == "scalping":
+            return t
+    return None
+
+def _close_scalping_position(self, current_price: float, reason: str = "SIGNAL"):
+    for trade in list(self.state.open_trades):
+        if trade.bot == "scalping":
+            self._close_binance_trade(trade, current_price, reason)
+            self.state.open_trades.remove(trade)
+    self.save()
+
+PaperTradingEngine.open_scalping_trade   = _open_scalping_trade
+PaperTradingEngine.check_scalping_stops  = _check_scalping_stops
+PaperTradingEngine.get_scalping_position = _get_scalping_position
+PaperTradingEngine.close_scalping_position = _close_scalping_position
+
+
 # ─── Polymarket Paper Trading Engine ─────────────────────────────────────────
 
 POLY_DIR = Path("./polymarket_data")
@@ -356,6 +434,7 @@ class PolymarketEngine:
             "confidence": signal.confidence,
             "reasoning": signal.reasoning[:200],
             "entry_time": datetime.now().isoformat(),
+            "end_date": getattr(signal.market, "end_date", ""),
             "unrealized_pnl": 0.0,
             "unrealized_pnl_pct": 0.0,
         }
@@ -438,6 +517,55 @@ class PolymarketEngine:
         if peak > 0:
             dd = (peak - self.state["current_capital"]) / peak * 100
             self.state["max_drawdown"] = max(self.state.get("max_drawdown", 0), dd)
+
+    def check_expired(self):
+        """Close positions on markets that have expired (past end_date)."""
+        now = datetime.now()
+        to_close = []
+        for pos in self.state["open_positions"]:
+            end_date_str = pos.get("end_date", "")
+            if not end_date_str:
+                continue
+            try:
+                # Parse ISO date (could be "2025-03-31T23:59:59Z" or "2025-03-31")
+                end_date_str_clean = end_date_str.replace("Z", "+00:00")
+                from datetime import timezone
+                if "T" in end_date_str_clean:
+                    end_date = datetime.fromisoformat(end_date_str_clean).replace(tzinfo=None)
+                else:
+                    end_date = datetime.fromisoformat(end_date_str_clean)
+                if now > end_date:
+                    # Market expired — close at current price (or entry if no update)
+                    current = pos.get("current_price", pos["entry_price"])
+                    to_close.append((pos["token_id"], current, "EXPIRED"))
+                    log.info(f"  Market expired: {pos['question'][:50]}... (ended {end_date_str})")
+            except Exception as e:
+                log.warning(f"  Error parsing end_date '{end_date_str}': {e}")
+                continue
+
+        for tid, price, reason in to_close:
+            self.close_trade(tid, price, reason)
+
+    def close_resolved(self, resolved_map: dict):
+        """Close positions on markets that have been resolved.
+        resolved_map: {token_id: {"outcome": "YES"|"NO", "winning_price": float}}
+        """
+        to_close = []
+        for pos in self.state["open_positions"]:
+            tid = pos["token_id"]
+            if tid in resolved_map:
+                info = resolved_map[tid]
+                outcome = info.get("outcome", "")
+                # If our side won, shares are worth $1; if lost, worth $0
+                if pos["side"] == outcome:
+                    exit_price = 1.0  # winner gets $1 per share
+                else:
+                    exit_price = 0.0  # loser gets $0
+                to_close.append((tid, exit_price, f"RESOLVED_{outcome}"))
+                log.info(f"  Market resolved ({outcome}): {pos['question'][:50]}...")
+
+        for tid, price, reason in to_close:
+            self.close_trade(tid, price, reason)
 
     def check_exits(self, price_map: dict):
         """Check exit conditions for all open positions."""
