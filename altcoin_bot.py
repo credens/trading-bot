@@ -374,13 +374,11 @@ def save_state(state: dict):
                 dashboard["win_rate"] = round(len(d_wins)/len(disk_closed)*100,1) if disk_closed else 0
                 dashboard["total_trades"] = len(disk_closed)
             dashboard["cooldowns"] = {**disk.get("cooldowns",{}), **dashboard.get("cooldowns",{})}
-            current_cooldowns = dashboard.get("cooldowns", {})
             disk_positions = disk.get("positions", {})
             bot_positions = dashboard.get("positions", {})
-            disk_positions_valid = {k: v for k, v in disk_positions.items() if k not in current_cooldowns}
-            if disk_positions_valid and not bot_positions:
-                dashboard["positions"] = disk_positions_valid
-                dashboard["open_positions"] = list(disk_positions_valid.values())
+            if disk_positions and not bot_positions:
+                dashboard["positions"] = disk_positions
+                dashboard["open_positions"] = list(disk_positions.values())
     except Exception as e:
         log.warning(f"Error en merge de estado: {e}")
     import os as _os
