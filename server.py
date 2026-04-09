@@ -38,25 +38,8 @@ DATA_DIRS = {
 # ─── Bot Runners ──────────────────────────────────────────────────────────────
 
 def run_binance_bot():
-    """Corre el bot de Binance en thread separado."""
-    try:
-        import time
-        from binance_bot import get_binance_client, set_leverage, run_cycle, INTERVAL_MINUTES, DRY_RUN
-        from paper_trading import get_binance_engine
-
-        log.info("🤖 Binance bot thread iniciado")
-        client = get_binance_client()
-        set_leverage(client)
-        paper = get_binance_engine(initial_capital=500.0)
-
-        while True:
-            try:
-                run_cycle(client, paper)
-            except Exception as e:
-                log.error(f"Error en ciclo Binance: {e}")
-            time.sleep(INTERVAL_MINUTES * 60)
-    except Exception as e:
-        log.error(f"Error fatal Binance bot: {e}")
+    """DEPRECATED — Binance swing bot removed."""
+    log.info("⚠️ Binance swing bot removed — skipping")
 
 
 def run_altcoin_bot():

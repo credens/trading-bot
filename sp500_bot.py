@@ -1,7 +1,7 @@
 """
 S&P500 + ETFs Trading Bot — Alpaca
 ====================================
-Estrategia híbrida: scoring técnico filtra, Claude confirma
+Estrategia: scoring técnico puro
 Opera acciones individuales del S&P500 + ETFs (SPY, QQQ, IWM)
 Usa Alpaca paper trading por defecto
 
@@ -159,8 +159,7 @@ def get_indicators(api, symbol: str, timeframe: str = "5Min", limit: int = 100) 
 # ─── Análisis Híbrido ─────────────────────────────────────────────────────────
 
 def analyze_symbol(indicators: dict, capital: float, open_longs: int, open_shorts: int) -> Optional[dict]:
-    """Scoring técnico + Claude para decidir si operar."""
-    from ai_client import call_ai, parse_json_response, is_available
+    """Scoring técnico para decidir si operar."""
 
     symbol = indicators["symbol"]
     rsi = indicators["rsi"]
@@ -217,56 +216,12 @@ def analyze_symbol(indicators: dict, capital: float, open_longs: int, open_short
     technical_direction = "LONG" if score > 0 else "SHORT"
     log.info(f"    {symbol} Score: {score:+d} → {technical_direction} | {' | '.join(signals[:3])}")
 
-    # ── Claude confirma ──────────────────────────────────────────────────────
-    if not is_available():
-        direction = technical_direction
-        confidence = "HIGH" if abs(score) >= 3 else "MEDIUM"
-        reasoning = f"Score {score:+d} | {' | '.join(signals[:2])}"
-        sl_pct = round(max(atr_pct * 1.5 / 100, 0.01), 4)
-        tp_pct = round(sl_pct * 2.5, 4)
-    else:
-        asset_type = "ETF de índice" if is_etf else "acción del S&P500"
-        prompt = f"""Trader experto en acciones US. Analizá esta señal y confirmá o descartá.
-
-{asset_type}: {symbol} @ ${price:.2f}
-RSI: {rsi:.1f} | BB%B: {bb_pct:.2f} | MACD: {macd_cross}
-Tendencia EMA: {trend} | Vol: {vol_ratio:.1f}x | ATR: {atr_pct:.2f}%
-Cambio reciente: {change_1d:+.1f}%
-
-Score técnico: {score:+d} → sugiere {technical_direction}
-Señales: {', '.join(signals)}
-Posiciones: {open_longs} LONG / {open_shorts} SHORT
-
-Respondé SOLO JSON:
-{{
-  "direction": "{technical_direction}|SKIP",
-  "confidence": "HIGH|MEDIUM|LOW",
-  "reasoning": "1 oración",
-  "stop_loss_pct": 0.02,
-  "take_profit_pct": 0.05
-}}"""
-
-        try:
-            raw = call_ai(prompt, max_tokens=150)
-            result = parse_json_response(raw)
-            direction = result.get("direction", technical_direction)
-            confidence = result.get("confidence", "MEDIUM")
-            reasoning = result.get("reasoning", f"Score {score:+d}")
-            sl_pct = float(result.get("stop_loss_pct", max(atr_pct * 1.5 / 100, 0.01)))
-            tp_pct = float(result.get("take_profit_pct", sl_pct * 2.5))
-
-            if direction == "SKIP" or confidence == "LOW":
-                log.info(f"    Claude descartó {symbol}")
-                return None
-            log.info(f"    Claude: {direction} | {confidence} | {reasoning[:60]}")
-        except Exception as e:
-            log.warning(f"    Claude error: {e} — usando técnico")
-            direction = technical_direction
-            confidence = "MEDIUM" if abs(score) >= 2 else "LOW"
-            if confidence == "LOW": return None
-            reasoning = f"Score {score:+d} | {' | '.join(signals[:2])}"
-            sl_pct = round(max(atr_pct * 1.5 / 100, 0.01), 4)
-            tp_pct = round(sl_pct * 2.5, 4)
+    # ── Decisión técnica ───────────────────────────────────────────────────────
+    direction = technical_direction
+    confidence = "HIGH" if abs(score) >= 3 else "MEDIUM"
+    reasoning = f"Score {score:+d} | {' | '.join(signals[:2])}"
+    sl_pct = round(max(atr_pct * 1.5 / 100, 0.01), 4)
+    tp_pct = round(sl_pct * 2.5, 4)
 
     max_pos = capital * MAX_POSITION_PCT
     size_usd = round(max_pos * (1.0 if confidence == "HIGH" else 0.6), 2)

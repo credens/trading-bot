@@ -23,11 +23,9 @@ log = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).parent
 
 STATE_FILES = {
-    "binance":  BASE_DIR / "paper_trading" / "binance_state.json",
     "altcoins": BASE_DIR / "altcoin_data" / "state.json",
     "rsi":      BASE_DIR / "rsi_bot_data" / "state.json",
     "scalping": BASE_DIR / "paper_trading" / "scalping_state.json",
-    "polymarket": BASE_DIR / "polymarket_data" / "state.json",
 }
 
 
@@ -103,7 +101,6 @@ if __name__ == "__main__":
     port = 8765
     server = HTTPServer(("localhost", port), Handler)
     log.info(f"Local state server corriendo en http://localhost:{port}")
-    log.info("  GET  /state/binance   — leer estado Binance")
     log.info("  GET  /state/altcoins  — leer estado Altcoins")
     log.info("  POST /state/altcoins  — escribir estado Altcoins")
     try:

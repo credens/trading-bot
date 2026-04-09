@@ -1,34 +1,34 @@
 {
-  "generated_at": "2026-03-26T14:24:57.541532",
-  "total_trades": 823,
+  "generated_at": "2026-04-08T23:19:38.970645",
+  "total_trades": 1081,
   "overall": {
-    "count": 823,
-    "win_rate_pct": 39.0,
-    "total_pnl": -699.8,
-    "avg_pnl_per_trade": -0.85,
-    "avg_pnl_pct": -0.33,
-    "avg_win": 26.05,
-    "avg_loss": -18.05,
-    "profit_factor": 0.92,
+    "count": 1081,
+    "win_rate_pct": 38.1,
+    "total_pnl": -408.91,
+    "avg_pnl_per_trade": -0.38,
+    "avg_pnl_pct": 0.62,
+    "avg_win": 22.04,
+    "avg_loss": -14.18,
+    "profit_factor": 0.96,
     "max_drawdown": 7548.73,
-    "avg_duration_min": 36.9,
-    "wins": 321,
-    "losses": 502
+    "avg_duration_min": 43.0,
+    "wins": 412,
+    "losses": 669
   },
   "by_bot": {
     "altcoins": {
-      "count": 313,
-      "win_rate_pct": 55.3,
-      "total_pnl": 49.64,
-      "avg_pnl_per_trade": 0.16,
-      "avg_pnl_pct": 0.27,
-      "avg_win": 2.89,
-      "avg_loss": -3.21,
-      "profit_factor": 1.11,
+      "count": 571,
+      "win_rate_pct": 46.2,
+      "total_pnl": 340.53,
+      "avg_pnl_per_trade": 0.6,
+      "avg_pnl_pct": 1.79,
+      "avg_win": 4.6,
+      "avg_loss": -2.85,
+      "profit_factor": 1.39,
       "max_drawdown": 51.65,
-      "avg_duration_min": 94.1,
-      "wins": 173,
-      "losses": 140
+      "avg_duration_min": 79.9,
+      "wins": 264,
+      "losses": 307
     },
     "binance": {
       "count": 145,
@@ -90,6 +90,10 @@
     }
   },
   "by_exit_reason": {
+    "EMERGENCY_EXIT": {
+      "count": 3,
+      "total_pnl": -23.21
+    },
     "MANUAL": {
       "count": 6,
       "total_pnl": 34.57
@@ -99,16 +103,16 @@
       "total_pnl": -92.49
     },
     "STOP_LOSS": {
-      "count": 576,
-      "total_pnl": -8924.2
+      "count": 720,
+      "total_pnl": -8864.2
     },
     "TAKE_PROFIT": {
-      "count": 202,
-      "total_pnl": 8248.65
+      "count": 215,
+      "total_pnl": 8521.02
     },
     "TIME_LIMIT": {
-      "count": 13,
-      "total_pnl": 33.67
+      "count": 111,
+      "total_pnl": 15.4
     }
   },
   "best_trade": {
@@ -137,112 +141,112 @@
     {
       "id": "",
       "bot": "altcoins",
-      "symbol": "PIPPINUSDT",
-      "side": "",
-      "exit_reason": "TAKE_PROFIT",
-      "pnl": 8.75,
-      "pnl_pct": 25.0,
-      "duration_min": 14.0,
-      "entry_time": "2026-03-26T12:07:10.928109"
-    },
-    {
-      "id": "",
-      "bot": "altcoins",
-      "symbol": "PIPPINUSDT",
+      "symbol": "JOEUSDT",
       "side": "",
       "exit_reason": "STOP_LOSS",
-      "pnl": 0.35,
-      "pnl_pct": 1.0,
-      "duration_min": 13.0,
-      "entry_time": "2026-03-26T12:21:19.248684"
+      "pnl": 8.28,
+      "pnl_pct": 23.66,
+      "duration_min": 34.1,
+      "entry_time": "2026-04-08T15:42:03.255915"
     },
     {
       "id": "",
       "bot": "altcoins",
-      "symbol": "ETHUSDT",
+      "symbol": "JOEUSDT",
       "side": "",
       "exit_reason": "STOP_LOSS",
-      "pnl": 0.5,
-      "pnl_pct": 1.0,
-      "duration_min": 46.4,
-      "entry_time": "2026-03-26T12:07:10.307872"
+      "pnl": -4.2,
+      "pnl_pct": -12.0,
+      "duration_min": 43.9,
+      "entry_time": "2026-04-08T17:10:54.280925"
     },
     {
       "id": "",
       "bot": "altcoins",
-      "symbol": "PIPPINUSDT",
+      "symbol": "BNBUSDT",
       "side": "",
       "exit_reason": "STOP_LOSS",
-      "pnl": -2.8,
-      "pnl_pct": -8.0,
-      "duration_min": 3.2,
-      "entry_time": "2026-03-26T13:05:41.365659"
+      "pnl": -4.2,
+      "pnl_pct": -12.0,
+      "duration_min": 144.1,
+      "entry_time": "2026-04-08T16:27:17.712496"
     },
     {
       "id": "",
       "bot": "altcoins",
-      "symbol": "SOLUSDT",
+      "symbol": "DOGEUSDT",
       "side": "",
       "exit_reason": "STOP_LOSS",
-      "pnl": 0.35,
-      "pnl_pct": 1.0,
-      "duration_min": 11.8,
-      "entry_time": "2026-03-26T13:01:15.425077"
+      "pnl": -4.2,
+      "pnl_pct": -12.0,
+      "duration_min": 56.4,
+      "entry_time": "2026-04-08T17:54:55.397219"
     },
     {
       "id": "",
       "bot": "altcoins",
-      "symbol": "ETHUSDT",
-      "side": "",
-      "exit_reason": "STOP_LOSS",
-      "pnl": 0.5,
-      "pnl_pct": 1.0,
-      "duration_min": 11.7,
-      "entry_time": "2026-03-26T13:05:40.851862"
-    },
-    {
-      "id": "",
-      "bot": "altcoins",
-      "symbol": "XRPUSDT",
+      "symbol": "BZUSDT",
       "side": "",
       "exit_reason": "TIME_LIMIT",
-      "pnl": 1.38,
-      "pnl_pct": 3.94,
-      "duration_min": 102.8,
-      "entry_time": "2026-03-26T11:56:19.542691"
+      "pnl": 3.36,
+      "pnl_pct": 9.6,
+      "duration_min": 210.8,
+      "entry_time": "2026-04-08T19:17:32.355693"
     },
     {
       "id": "",
       "bot": "altcoins",
-      "symbol": "PIPPINUSDT",
+      "symbol": "JOEUSDT",
       "side": "",
       "exit_reason": "STOP_LOSS",
-      "pnl": 0.5,
-      "pnl_pct": 1.0,
-      "duration_min": 3.1,
-      "entry_time": "2026-03-26T14:15:34.550725"
+      "pnl": -4.2,
+      "pnl_pct": -12.0,
+      "duration_min": 7.5,
+      "entry_time": "2026-04-08T22:49:46.947398"
     },
     {
       "id": "",
       "bot": "altcoins",
-      "symbol": "XRPUSDT",
+      "symbol": "BZUSDT",
       "side": "",
       "exit_reason": "STOP_LOSS",
-      "pnl": 0.35,
-      "pnl_pct": 1.0,
-      "duration_min": 41.6,
-      "entry_time": "2026-03-26T13:39:13.155070"
+      "pnl": -4.2,
+      "pnl_pct": -12.0,
+      "duration_min": 13.0,
+      "entry_time": "2026-04-08T22:49:46.537328"
     },
     {
       "id": "",
       "bot": "altcoins",
-      "symbol": "PIPPINUSDT",
+      "symbol": "FARTCOINUSDT",
       "side": "",
       "exit_reason": "STOP_LOSS",
-      "pnl": 0.5,
-      "pnl_pct": 1.0,
-      "duration_min": 1.0,
-      "entry_time": "2026-03-26T14:23:57.109324"
+      "pnl": 6.05,
+      "pnl_pct": 12.1,
+      "duration_min": 9.0,
+      "entry_time": "2026-04-08T23:01:44.169583"
+    },
+    {
+      "id": "",
+      "bot": "altcoins",
+      "symbol": "CLUSDT",
+      "side": "",
+      "exit_reason": "STOP_LOSS",
+      "pnl": -4.2,
+      "pnl_pct": -12.0,
+      "duration_min": 76.2,
+      "entry_time": "2026-04-08T22:00:06.772799"
+    },
+    {
+      "id": "",
+      "bot": "altcoins",
+      "symbol": "FARTCOINUSDT",
+      "side": "",
+      "exit_reason": "STOP_LOSS",
+      "pnl": -4.2,
+      "pnl_pct": -12.0,
+      "duration_min": 8.8,
+      "entry_time": "2026-04-08T23:10:51.798817"
     }
   ]
 }

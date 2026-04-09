@@ -2,16 +2,16 @@
 Multi-Altcoin Adaptive Bot
 ===========================
 - Trae top 20 altcoins por volumen de Binance Futures automáticamente
-- Claude analiza cada una y elige la estrategia óptima:
+- Scoring técnico elige la estrategia óptima:
     * MEAN_REVERSION: RSI sobrevendido/sobrecomprado
     * MOMENTUM: breakout con volumen alto
     * RANGE: oscilación en canal Bollinger
 - Sizing dinámico basado en tamaño de la oportunidad (Kelly fraccionado)
-- Opera en paralelo, máx 5 posiciones simultáneas
+- Opera en paralelo, máx 10 posiciones simultáneas
 - Paper trading por defecto
 
 SETUP:
-  pip install python-binance anthropic python-dotenv pandas numpy
+  pip install python-binance python-dotenv pandas numpy
 """
 
 import os
@@ -33,17 +33,17 @@ log = logging.getLogger(__name__)
 # ─── Config ───────────────────────────────────────────────────────────────────
 
 LEVERAGE         = int(os.getenv("ALTCOIN_LEVERAGE",    "20"))   # x20
-MAX_POSITIONS    = int(os.getenv("ALTCOIN_MAX_POSITIONS","5"))    # máx 5 posiciones simultáneas
+MAX_POSITIONS    = int(os.getenv("ALTCOIN_MAX_POSITIONS","10"))   # máx 10 posiciones simultáneas
 TOTAL_CAPITAL    = float(os.getenv("ALTCOIN_CAPITAL",   "500"))
 DRY_RUN          = os.getenv("DRY_RUN", "true").lower() == "true"
 INTERVAL_MINUTES = int(os.getenv("ALTCOIN_INTERVAL",   "3"))
 MIN_VOLUME_USDT  = float(os.getenv("ALTCOIN_MIN_VOLUME","300000000"))  # $300M — suficiente liquidez
 TOP_N            = int(os.getenv("ALTCOIN_TOP_N",       "20"))   # escanear top 20 por volumen
 CANDLE_INTERVAL  = os.getenv("ALTCOIN_CANDLE", "5m")            # velas de 5m
-DEFAULT_SL_PCT   = float(os.getenv("ALTCOIN_SL",  "0.008"))     # SL 0.8%
-DEFAULT_TP_PCT   = float(os.getenv("ALTCOIN_TP",  "0.025"))     # TP 2.5% (R:R 3.1:1)
-TRAILING_TRIGGER = float(os.getenv("ALTCOIN_TRAIL", "0.005"))   # mover SL a BE cuando +0.5%
-TIME_LIMIT_MIN   = int(os.getenv("ALTCOIN_TIME_LIMIT", "90"))    # cerrar si stale > 90min
+DEFAULT_SL_PCT   = float(os.getenv("ALTCOIN_SL",  "0.006"))     # SL 0.6%
+DEFAULT_TP_PCT   = float(os.getenv("ALTCOIN_TP",  "0.025"))     # TP 2.5% (R:R 4.2:1)
+TRAILING_TRIGGER = float(os.getenv("ALTCOIN_TRAIL", "0.004"))   # mover SL a BE cuando +0.4%
+TIME_LIMIT_MIN   = int(os.getenv("ALTCOIN_TIME_LIMIT", "120"))   # cerrar si stale > 120min
 
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
@@ -61,8 +61,7 @@ EXCLUDE = {"BUSDUSDT", "USDCUSDT", "TUSDUSDT", "USDTUSDT", "BTCUSDT",
            "ONTUSDT", "RIVERUSDT", "HYPEUSDT", "XAGUSDT", "XAUUSDT",
            "PAXGUSDT", "1000PEPEUSDT"}
 
-from ai_client import call_ai, parse_json_response, is_available, get_model_info
-log.info(f"AI Engine: {get_model_info()}")
+log.info("Engine: scoring técnico puro")
 
 # ─── Binance Client ───────────────────────────────────────────────────────────
 
@@ -219,7 +218,7 @@ def get_indicators(client, symbol: str) -> Optional[dict]:
         return None
 
 
-# ─── Claude Analysis ──────────────────────────────────────────────────────────
+# ─── Technical Analysis ──────────────────────────────────────────────────────
 
 ADAPTIVE_PROMPT = """Eres un trader experto en altcoins. Analizá esta altcoin y elegí la estrategia óptima basada en su perfil.
 
@@ -399,9 +398,8 @@ def add_log(state: dict, msg: str):
 
 def analyze_altcoin(indicators: dict, market_data: dict, capital: float, open_positions: int, open_longs: int = 0, open_shorts: int = 0) -> Optional[dict]:
     """
-    Análisis híbrido: scoring técnico filtra primero, Claude decide en los mejores candidatos.
+    Scoring técnico para decidir si operar una altcoin.
     """
-    from ai_client import call_ai, parse_json_response, is_available
 
     rsi          = indicators.get("rsi", 50)
     bb_pct       = indicators.get("bb_pct", 0.5)
@@ -479,57 +477,14 @@ def analyze_altcoin(indicators: dict, market_data: dict, capital: float, open_po
     technical_direction = "LONG" if score > 0 else "SHORT"
     log.info(f"    Score técnico: {score:+d} → {technical_direction} | {' | '.join(signals[:3])}")
 
-    # ── Paso 2: Claude confirma o descarta ───────────────────────────────────
-    if not is_available():
-        # Fallback a scoring puro si Claude no está disponible
-        if abs(score) >= 4:   confidence = "HIGH"
-        elif abs(score) >= 2: confidence = "MEDIUM"
-        else: return None
-        direction = technical_direction
-        sl_pct = DEFAULT_SL_PCT
-        tp_pct = DEFAULT_TP_PCT
-        reasoning = f"Score {score:+d} | {' | '.join(signals[:3])}"
-    else:
-        prompt = f"""Trader experto en crypto futuros, velas 5m. Confirmá o descartá la señal.
-
-{symbol} | Precio: ${price:.6f} | Cambio 24h: {change_24h:+.1f}%
-EMA trend: {ema_trend} | Cross: {'↑ BULLISH' if cross_bull else '↓ BEARISH' if cross_bear else 'ninguno'}
-VWAP: {price_vs_vwap:+.2f}% | RSI: {rsi:.0f} | MACD: {macd_cross}
-Vol: {vol_ratio:.1f}x | ATR: {atr_pct:.2f}% | Funding: {funding:+.4f}%
-
-Score: {score:+d} → {technical_direction} | Señales: {', '.join(signals[:4])}
-Posiciones: {open_longs}L / {open_shorts}S abiertas
-
-Respondé SOLO JSON (SL máx 1.5%, TP máx 5%):
-{{
-  "direction": "{technical_direction}|SKIP",
-  "confidence": "HIGH|MEDIUM|LOW",
-  "reasoning": "1 oración",
-  "stop_loss_pct": 0.008,
-  "take_profit_pct": 0.025
-}}
-SKIP solo si la señal es claramente inválida."""
-
-        try:
-            raw = call_ai(prompt, max_tokens=150)
-            result = parse_json_response(raw)
-            direction = result.get("direction", technical_direction)
-            confidence = result.get("confidence", "MEDIUM")
-            if direction == "SKIP" or confidence == "LOW":
-                log.info(f"    Claude descartó la señal")
-                return None
-            reasoning = result.get("reasoning", f"Score {score:+d}")
-            sl_pct = min(float(result.get("stop_loss_pct",  DEFAULT_SL_PCT)), 0.015)
-            tp_pct = min(float(result.get("take_profit_pct", DEFAULT_TP_PCT)), 0.05)
-            log.info(f"    Claude confirma: {direction} | {confidence} | {reasoning}")
-        except Exception as e:
-            log.warning(f"    Error Claude: {e} — usando scoring técnico")
-            direction = technical_direction
-            confidence = "MEDIUM" if abs(score) >= 3 else "LOW"
-            if confidence == "LOW": return None
-            sl_pct = DEFAULT_SL_PCT
-            tp_pct = DEFAULT_TP_PCT
-            reasoning = f"Score {score:+d} | {' | '.join(signals[:3])}"
+    # ── Paso 2: Scoring técnico → decisión ─────────────────────────────────────
+    if abs(score) >= 4:   confidence = "HIGH"
+    elif abs(score) >= 2: confidence = "MEDIUM"
+    else: return None
+    direction = technical_direction
+    sl_pct = DEFAULT_SL_PCT
+    tp_pct = DEFAULT_TP_PCT
+    reasoning = f"Score {score:+d} | {' | '.join(signals[:3])}"
 
     # Estrategia basada en señal dominante
     if cross_bull or cross_bear:
@@ -749,7 +704,7 @@ def check_positions(client, state: dict, scenario=None):
                 _close_position(state, symbol, pos, exit_price, exit_reason)
                 to_close.append(symbol)
 
-                if exit_reason in ("STOP_LOSS", "EMERGENCY_EXIT"):
+                if exit_reason in ("STOP_LOSS", "EMERGENCY_EXIT") and not pos.get("trailing_activated"):
                     cooldown_until = (now + timedelta(minutes=5)).isoformat()
                     state.setdefault("cooldowns", {})[symbol] = cooldown_until
 
@@ -768,6 +723,12 @@ def run_cycle(client):
     log.info(f"{'#'*55}")
 
     state = load_state()
+
+    # 0a. Verificar pausa por drawdown
+    from drawdown_monitor import is_paused
+    if is_paused(STATE_FILE):
+        log.warning("⛔ BOT PAUSADO por drawdown — no operando")
+        return
 
     # 0. Verificar cierres manuales solicitados desde dashboard
     manual_closes = state.get("manual_close", [])
@@ -979,6 +940,12 @@ def run_cycle(client):
     state["scanning"] = False
     log.info(f"\nCiclo completo: {executed} nuevas posiciones | Total abiertas: {open_count}")
     save_state(state)
+
+    # Drawdown check
+    from drawdown_monitor import check_drawdown
+    capital = state.get("capital", TOTAL_CAPITAL)
+    peak = state.get("peak_capital", capital)
+    check_drawdown("altcoins", capital, TOTAL_CAPITAL, peak, STATE_FILE)
 
 
 def run_forever():

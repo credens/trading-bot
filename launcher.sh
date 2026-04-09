@@ -1,19 +1,13 @@
 #!/bin/bash
 
 # ─── Trading Bot HQ Launcher ───────────────────────────────────────────────────
-# Lanza: Polymarket bot + Binance bot + Dashboard
-# Setup RAG automático para ambos bots
+# Lanza: Scalping BTC + Altcoins + Dashboard
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BOT_DIR="$SCRIPT_DIR"
 DASHBOARD_DIR="$SCRIPT_DIR/polymarket-dashboard"
 LOG_FILE="$SCRIPT_DIR/bot.log"
 
-
-# Binance RAG
-BN_DATA_DIR="$SCRIPT_DIR/binance_data"
-BN_MODEL="$BN_DATA_DIR/scoring_model.pkl"
-BN_DB="$BN_DATA_DIR/historical.db"
 
 # RSI Bot
 RSI_DATA_DIR="$SCRIPT_DIR/rsi_bot_data"
@@ -43,28 +37,10 @@ if ! command -v "$PYTHON" &> /dev/null; then
 fi
 
 echo "Usando $($PYTHON --version)..."
-$PYTHON -c "import anthropic, dotenv, requests, binance, pandas, numpy" 2>/dev/null
+$PYTHON -c "import dotenv, requests, binance, pandas, numpy" 2>/dev/null
 if [ $? -ne 0 ]; then
     osascript -e 'display dialog "Instalando dependencias Python..." buttons {"OK"} default button "OK"'
-    $PYTHON -m pip install anthropic python-dotenv requests python-binance pandas numpy --quiet 2>/dev/null
-fi
-
-# ─── RAG Binance BTC ──────────────────────────────────────────────────────────
-echo ""
-echo "📈 Binance BTC RAG..."
-
-if [ ! -f "$BN_MODEL" ] || [ ! -f "$BN_DB" ]; then
-    echo "   Primera vez: descargando 1 año de velas BTC (~3 min)..."
-    $PYTHON btc_rag_pipeline.py >> "$LOG_FILE" 2>&1
-    echo "   ✓ Setup BTC RAG completo"
-else
-    BN_DAYS=$(( ( $(date +%s) - $(date -r "$BN_MODEL" +%s) ) / 86400 ))
-    if [ "$BN_DAYS" -ge 7 ]; then
-        echo "   🔄 Actualizando BTC RAG en background (${BN_DAYS} días)..."
-        $PYTHON btc_rag_pipeline.py refresh >> "$LOG_FILE" 2>&1 &
-    else
-        echo "   ✓ BTC RAG OK (hace ${BN_DAYS} días)"
-    fi
+    $PYTHON -m pip install python-dotenv requests python-binance pandas numpy --quiet 2>/dev/null
 fi
 
 # ─── Local State Server (para dashboard) ─────────────────────────────────────
@@ -73,13 +49,6 @@ nohup $PYTHON local_server.py >> "$LOG_FILE" 2>&1 &
 SS_PID=$!
 echo $SS_PID > "$SCRIPT_DIR/.stateserver.pid"
 echo "✓ State server iniciado (PID: $SS_PID) → localhost:8765"
-
-# ─── Lanzar Binance Bot ───────────────────────────────────────────────────────
-echo "Iniciando Binance BTC bot..."
-nohup $PYTHON binance_bot.py >> "$LOG_FILE" 2>&1 &
-BN_PID=$!
-echo $BN_PID > "$SCRIPT_DIR/.binance.pid"
-echo "✓ Binance bot iniciado (PID: $BN_PID)"
 
 # ─── Lanzar Scalping Bot ─────────────────────────────────────────────────────
 echo "Iniciando Scalping BTC 1m bot..."
@@ -95,35 +64,12 @@ ALT_PID=$!
 echo $ALT_PID > "$SCRIPT_DIR/.altcoin.pid"
 echo "✓ Altcoin bot iniciado (PID: $ALT_PID)"
 
-# ─── WARP VPN (para Polymarket — bloqueado en AR) ────────────────────────────
-WARP_CLI="/usr/local/bin/warp-cli"
-if [ -x "$WARP_CLI" ]; then
-    # Verificar si ya está conectada (excluir "Disconnected")
-    WARP_STATUS=$("$WARP_CLI" status 2>&1)
-    if echo "$WARP_STATUS" | grep -q "Status update: Connected"; then
-        echo "✓ WARP VPN ya conectada"
-    else
-        echo "Conectando WARP VPN..."
-        "$WARP_CLI" connect 2>/dev/null
-        sleep 3
-        # Verificar que se conectó
-        WARP_CHECK=$("$WARP_CLI" status 2>&1)
-        if echo "$WARP_CHECK" | grep -q "Status update: Connected"; then
-            echo "✓ WARP VPN conectada"
-        else
-            echo "⚠ WARP VPN falló al conectar: $WARP_CHECK"
-        fi
-    fi
-else
-    echo "⚠ WARP no instalado — Polymarket puede fallar (brew install cloudflare-warp)"
-fi
-
-# ─── Lanzar Polymarket AI Bot ─────────────────────────────────────────────────
-echo "Iniciando Polymarket AI bot..."
-nohup $PYTHON polymarket_bot.py >> "$LOG_FILE" 2>&1 &
-PM_PID=$!
-echo $PM_PID > "$SCRIPT_DIR/.polymarket.pid"
-echo "✓ Polymarket bot iniciado (PID: $PM_PID)"
+# ─── Lanzar Daily Report Daemon ─────────────────────────────────────────────
+echo "Iniciando daily report daemon..."
+nohup $PYTHON daily_report.py --loop >> "$LOG_FILE" 2>&1 &
+DR_PID=$!
+echo $DR_PID > "$SCRIPT_DIR/.dailyreport.pid"
+echo "✓ Daily report daemon iniciado (PID: $DR_PID)"
 
 # ─── Lanzar Dashboard ─────────────────────────────────────────────────────────
 HAS_NODE=false
@@ -144,20 +90,18 @@ fi
 
 echo ""
 echo "✅ Todo corriendo!"
-echo "   Binance BTC:  ciclos cada 15 min"
-echo "   Altcoins:     ciclos cada 15 min (top 20 por volumen)"
-echo "   Polymarket:   ciclos cada 10 min (mercados de prediccion)"
+echo "   Scalping BTC: ciclos cada 30s"
+echo "   Altcoins:     ciclos cada 1 min (top 20 por volumen)"
 echo "   Log: tail -f $LOG_FILE"
 echo ""
 
-osascript -e 'display notification "Binance + Altcoins + Polymarket iniciados" with title "Trading Bot HQ" subtitle "Dashboard en localhost:5173"'
+osascript -e 'display notification "Scalping + Altcoins iniciados" with title "Trading Bot HQ" subtitle "Dashboard en localhost:5173"'
 tail -f "$LOG_FILE"
 
 # ─── Sincronizar paper trading state con dashboard ────────────────────────────
 if [ "$HAS_NODE" = true ]; then
     mkdir -p "$DASHBOARD_DIR/public/paper_trading"
     # Symlinks para que Vite sirva los JSON del paper trading
-    ln -sf "$BOT_DIR/paper_trading/binance_state.json" "$DASHBOARD_DIR/public/paper_trading/binance_state.json" 2>/dev/null
     mkdir -p "$DASHBOARD_DIR/public/rsi_bot_data"
     ln -sf "$BOT_DIR/rsi_bot_data/state.json" "$DASHBOARD_DIR/public/rsi_bot_data/state.json" 2>/dev/null
         mkdir -p "$DASHBOARD_DIR/public/altcoin_data"

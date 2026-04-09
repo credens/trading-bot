@@ -51,8 +51,8 @@ SCALP_CAPITAL  = float(os.getenv("SCALP_CAPITAL", "500"))
 CYCLE_SECONDS  = int(os.getenv("SCALP_CYCLE_SECONDS", "30"))
 SL_PCT         = 0.004   # 0.4% mínimo
 TP_PCT         = 0.008   # 0.8% mínimo
-POS_PCT        = 0.10    # 10% del capital por trade
-MIN_HOLD_SECS  = 180     # 3 min mínimo antes de cerrar por SIGNAL (evita whipsaw)
+POS_PCT        = 0.15    # 15% del capital por trade
+MIN_HOLD_SECS  = 90      # 90s mínimo antes de cerrar por SIGNAL
 
 BINANCE_API_KEY    = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
@@ -257,7 +257,7 @@ def analyze(ind: dict, current_position: str, scenario=None) -> dict:
     # SL dinámico basado en ATR (mín 0.4%, máx 0.6%)
     sl_pct = round(max(min(atr_pct * 1.2 / 100, 0.006), SL_PCT), 5)
     tp_mult = scenario.get("sc_tp_mult", 1.0) if scenario else 1.0
-    tp_pct = round(sl_pct * 2.8 * tp_mult, 5)
+    tp_pct = round(sl_pct * 3.0 * tp_mult, 5)
 
     def make(decision, confidence, reasoning, signals):
         # Size dinámico según escenario y dirección
@@ -303,11 +303,11 @@ def analyze(ind: dict, current_position: str, scenario=None) -> dict:
     # ══════════════════════════════════════════════════════════
     if regime == "BREAKOUT":
         candle_body = price - ind.get("open", price)  # no lo tenemos fácil, usar MACD
-        if macd_h > 0 and ind["cvd_bullish"] and rsi < 75:
+        if macd_h > 0 and rsi < 75:  # CVD relaxed for breakout
             return make("LONG", "HIGH",
                         f"Breakout LONG | Vol:{vol:.1f}x | CVD↑ | MACD:{macd_h:+.1f}",
                         [f"Vol {vol:.1f}x ✓", "CVD alcista ✓", f"MACD {macd_h:+.1f}"])
-        if macd_h < 0 and ind["cvd_bearish"] and rsi > 25:
+        if macd_h < 0 and rsi > 25:  # CVD relaxed for breakout
             return make("SHORT", "HIGH",
                         f"Breakout SHORT | Vol:{vol:.1f}x | CVD↓ | MACD:{macd_h:+.1f}",
                         [f"Vol {vol:.1f}x ✓", "CVD bajista ✓", f"MACD {macd_h:+.1f}"])
@@ -480,6 +480,14 @@ def update_trailing_stop(open_trade, price: float, atr: float = 0) -> Optional[f
 def run_cycle(client, paper):
     log.info(f"── CICLO {datetime.now().strftime('%H:%M:%S')} ──────────────────────────")
 
+    # 0a. Verificar pausa por drawdown
+    from drawdown_monitor import is_paused
+    if is_paused(SCALPING_STATE):
+        log.warning("  ⛔ BOT PAUSADO por drawdown — no operando")
+        paper.add_log("⛔ PAUSADO por drawdown")
+        paper.save()
+        return
+
     # 0. Cierre manual desde dashboard
     try:
         raw = _json.loads(SCALPING_STATE.read_text()) if SCALPING_STATE.exists() else {}
@@ -578,17 +586,17 @@ def run_cycle(client, paper):
                 # Consecutivos del mismo lado
                 consecutive_sl = 0
                 for t in reversed(scalp_trades):
-                    if getattr(t, "exit_reason") == "STOP_LOSS" and getattr(t, "side") == action:
+                    if getattr(t, "exit_reason") == "STOP_LOSS" and getattr(t, "side") == action and (getattr(t, "pnl", 0) or 0) < 0:
                         consecutive_sl += 1
                     else:
                         break
-                # Total SLs del mismo lado en 2h
+                # Total SLs con pérdida del mismo lado en 2h
                 sl_same_2h = sum(
                     1 for t in scalp_trades
-                    if getattr(t, "exit_reason") == "STOP_LOSS" and getattr(t, "side") == action
+                    if getattr(t, "exit_reason") == "STOP_LOSS" and getattr(t, "side") == action and (getattr(t, "pnl", 0) or 0) < 0
                 )
                 if consecutive_sl >= 2 or sl_same_2h >= 3:
-                    pause_min = 90 if sl_same_2h >= 3 else 30  # 90 min o 30 min
+                    pause_min = 5
                     blocked_key = f"blocked_{action.lower()}_until"
                     raw2[blocked_key] = (datetime.now() + timedelta(minutes=pause_min)).isoformat()
                     SCALPING_STATE.write_text(_json.dumps(raw2, indent=2))
@@ -622,6 +630,11 @@ def run_cycle(client, paper):
 
     paper.save()
     log.info(f"  Capital: ${paper.state.current_capital:.2f} | P&L: {paper.state.total_pnl:+.2f} | Win: {paper.state.win_rate:.0f}%")
+
+    # Drawdown check
+    from drawdown_monitor import check_drawdown
+    check_drawdown("scalping", paper.state.current_capital, paper.state.initial_capital,
+                   paper.state.peak_capital, SCALPING_STATE)
 
 
 # ─── Run ──────────────────────────────────────────────────────────────────────

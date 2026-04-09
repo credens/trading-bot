@@ -23,11 +23,6 @@ log = logging.getLogger(__name__)
 BASE = Path(__file__).parent
 
 BOTS = {
-    "binance_bot": {
-        "script": BASE / "binance_bot.py",
-        "log":    BASE / "logs" / "binance_bot.log",
-        "timeout_min": 3,
-    },
     "scalping_bot": {
         "script": BASE / "scalping_bot.py",
         "log":    BASE / "logs" / "scalping_bot.log",

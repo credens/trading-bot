@@ -1,9 +1,13 @@
 
 > polymarket-dashboard@0.0.0 dev
-> vite --port 5174
+> vite --port 5173
 
 
-  VITE v8.0.0-beta.18  ready in 219 ms
+  VITE v8.0.0-beta.18  ready in 214 ms
 
-  ➜  Local:   http://localhost:5174/
+  ➜  Local:   http://localhost:5173/
   ➜  Network: use --host to expose
+11:08:30 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
+11:08:32 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
+11:08:40 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
+11:09:02 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
