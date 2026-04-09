@@ -1,27 +1,27 @@
 {
   "bot": "binance",
   "initial_capital": 500,
-  "current_capital": 2264.699999999999,
+  "current_capital": 2241.599999999999,
   "open_trades": [
     {
-      "id": "SC-231435",
+      "id": "SC-100541",
       "bot": "scalping",
       "side": "SHORT",
-      "entry_price": 70812.4,
-      "entry_time": "2026-04-08T23:14:35.297015",
-      "size": 94.36,
-      "stop_loss": 71095.65,
-      "take_profit": 69707.73,
+      "entry_price": 71098.0,
+      "entry_time": "2026-04-09T10:05:41.326122",
+      "size": 93.4,
+      "stop_loss": 71382.39,
+      "take_profit": 69988.87,
       "exit_price": null,
       "exit_time": null,
       "exit_reason": null,
       "pnl": null,
       "pnl_pct": null,
       "status": "OPEN",
-      "reasoning": "TREND SHORT score:2 | EMA bearish | CVD \u2193",
-      "confidence": "MEDIUM",
+      "reasoning": "Breakout SHORT | Vol:2.7x | CVD\u2193 | MACD:-20.1",
+      "confidence": "HIGH",
       "leverage": 10,
-      "best_price": 70794.0
+      "best_price": 70984.0
     }
   ],
   "closed_trades": [
@@ -3544,221 +3544,341 @@
       "confidence": "MEDIUM",
       "leverage": 10,
       "best_price": 70965.6
+    },
+    {
+      "id": "SC-231435",
+      "bot": "scalping",
+      "side": "SHORT",
+      "entry_price": 70812.4,
+      "entry_time": "2026-04-08T23:14:35.297015",
+      "size": 94.36,
+      "stop_loss": 71095.65,
+      "take_profit": 69707.73,
+      "exit_price": 70910.6,
+      "exit_time": "2026-04-08T23:24:44.095160",
+      "exit_reason": "SIGNAL",
+      "pnl": -1.31,
+      "pnl_pct": -1.39,
+      "status": "CLOSED",
+      "reasoning": "TREND SHORT score:2 | EMA bearish | CVD \u2193",
+      "confidence": "MEDIUM",
+      "leverage": 10,
+      "best_price": 70794.0
+    },
+    {
+      "id": "SC-232715",
+      "bot": "scalping",
+      "side": "LONG",
+      "entry_price": 70971.3,
+      "entry_time": "2026-04-08T23:27:15.986547",
+      "size": 235.77,
+      "stop_loss": 70687.41,
+      "take_profit": 72078.45,
+      "exit_price": 71110.0,
+      "exit_time": "2026-04-08T23:49:35.503820",
+      "exit_reason": "MANUAL",
+      "pnl": 4.61,
+      "pnl_pct": 1.95,
+      "status": "CLOSED",
+      "reasoning": "TREND LONG score:3 | EMA bullish | VWAP +0.36% | CVD \u2191",
+      "confidence": "MEDIUM",
+      "leverage": 10,
+      "best_price": 71096.6
+    },
+    {
+      "id": "SC-234935",
+      "bot": "scalping",
+      "side": "LONG",
+      "entry_price": 71119.4,
+      "entry_time": "2026-04-08T23:49:35.846119",
+      "size": 236.24,
+      "stop_loss": 70834.92,
+      "take_profit": 72228.86,
+      "exit_price": 70834.92,
+      "exit_time": "2026-04-09T01:57:28.376119",
+      "exit_reason": "STOP_LOSS",
+      "pnl": -9.45,
+      "pnl_pct": -4.0,
+      "status": "CLOSED",
+      "reasoning": "TREND LONG score:5 | EMA bullish | RSI 65 | VWAP +0.52%",
+      "confidence": "HIGH",
+      "leverage": 10,
+      "best_price": 71144.8
+    },
+    {
+      "id": "SC-015728",
+      "bot": "scalping",
+      "side": "SHORT",
+      "entry_price": 70738.1,
+      "entry_time": "2026-04-09T01:57:28.740651",
+      "size": 94.12,
+      "stop_loss": 71021.05,
+      "take_profit": 69634.59,
+      "exit_price": 71021.05,
+      "exit_time": "2026-04-09T07:03:09.035153",
+      "exit_reason": "STOP_LOSS",
+      "pnl": -3.76,
+      "pnl_pct": -4.0,
+      "status": "CLOSED",
+      "reasoning": "TREND SHORT score:3 | EMA bearish | VWAP -0.21% | CVD \u2193",
+      "confidence": "MEDIUM",
+      "leverage": 10,
+      "best_price": 70982.5
+    },
+    {
+      "id": "SC-070309",
+      "bot": "scalping",
+      "side": "LONG",
+      "entry_price": 71465.1,
+      "entry_time": "2026-04-09T07:03:09.370813",
+      "size": 234.91,
+      "stop_loss": 71179.24,
+      "take_profit": 72579.96,
+      "exit_price": 71179.24,
+      "exit_time": "2026-04-09T08:48:27.534293",
+      "exit_reason": "STOP_LOSS",
+      "pnl": -9.4,
+      "pnl_pct": -4.0,
+      "status": "CLOSED",
+      "reasoning": "TREND LONG score:2 | EMA bullish | VWAP +0.31%",
+      "confidence": "MEDIUM",
+      "leverage": 10,
+      "best_price": 71360.8
+    },
+    {
+      "id": "SC-084827",
+      "bot": "scalping",
+      "side": "LONG",
+      "entry_price": 71177.0,
+      "entry_time": "2026-04-09T08:48:27.862508",
+      "size": 233.97,
+      "stop_loss": 70892.29,
+      "take_profit": 72287.36,
+      "exit_price": 71032.5,
+      "exit_time": "2026-04-09T09:24:32.476545",
+      "exit_reason": "SIGNAL",
+      "pnl": -4.75,
+      "pnl_pct": -2.03,
+      "status": "CLOSED",
+      "reasoning": "TREND LONG score:2 | EMA bullish | CVD \u2191",
+      "confidence": "MEDIUM",
+      "leverage": 10,
+      "best_price": 71176.4
     }
   ],
-  "total_pnl": 2388.6100000000033,
-  "total_pnl_pct": 371.81,
-  "win_rate": 30.1,
+  "total_pnl": 2364.5500000000034,
+  "total_pnl_pct": 367.0,
+  "win_rate": 29.7,
   "max_drawdown": 45.442703130369516,
   "peak_capital": 2796.12,
-  "trades_today": 104,
-  "last_updated": "2026-04-08T23:23:43.327748",
+  "trades_today": 110,
+  "last_updated": "2026-04-09T10:35:32.195070",
   "cycle_log": [
     {
-      "time": "23:23:43",
-      "msg": "HOLD \u2014 SHORT activo | ADX:23 CVD:\u2191"
+      "time": "10:35:32",
+      "msg": "HOLD \u2014 SHORT activo | ADX:31 CVD:\u2193"
     },
     {
-      "time": "23:23:12",
-      "msg": "HOLD forzado \u2014 min hold 82s (TREND_STRONG)"
-    },
-    {
-      "time": "23:22:42",
-      "msg": "HOLD forzado \u2014 min hold 112s (TREND_STRONG)"
-    },
-    {
-      "time": "23:22:11",
-      "msg": "HOLD forzado \u2014 min hold 143s (TREND_STRONG)"
-    },
-    {
-      "time": "23:21:41",
-      "msg": "HOLD forzado \u2014 min hold 173s (TREND_STRONG)"
-    },
-    {
-      "time": "23:21:10",
-      "msg": "HOLD forzado \u2014 min hold 204s (TREND_STRONG)"
-    },
-    {
-      "time": "23:20:40",
-      "msg": "HOLD forzado \u2014 min hold 234s (TREND_STRONG)"
-    },
-    {
-      "time": "23:20:10",
-      "msg": "HOLD forzado \u2014 min hold 264s (TREND_STRONG)"
-    },
-    {
-      "time": "23:19:39",
+      "time": "10:33:49",
       "msg": "HOLD \u2014 SHORT activo | ADX:27 CVD:\u2193"
     },
     {
-      "time": "23:19:09",
-      "msg": "HOLD \u2014 SHORT activo | ADX:26 CVD:\u2193"
+      "time": "10:05:41",
+      "msg": "SCALP SHORT | entrada $71,098 | SL $71,382 | TP $69,989 | size $93"
     },
     {
-      "time": "23:18:38",
+      "time": "09:24:32",
+      "msg": "\u274c CERRADO SIGNAL | exit $71,032 | P&L -4.75 (-2.0%)"
+    },
+    {
+      "time": "08:49:48",
+      "msg": "HOLD \u2014 LONG activo | ADX:32 CVD:\u2191"
+    },
+    {
+      "time": "08:48:27",
+      "msg": "SCALP LONG | entrada $71,177 | SL $70,892 | TP $72,287 | size $234"
+    },
+    {
+      "time": "08:48:27",
+      "msg": "\u274c CERRADO STOP_LOSS | exit $71,179 | P&L -9.40 (-4.0%)"
+    },
+    {
+      "time": "07:30:41",
+      "msg": "HOLD \u2014 LONG activo | ADX:33 CVD:\u2193"
+    },
+    {
+      "time": "07:30:10",
+      "msg": "HOLD \u2014 LONG activo | ADX:33 CVD:\u2193"
+    },
+    {
+      "time": "07:29:40",
+      "msg": "HOLD \u2014 LONG activo | ADX:34 CVD:\u2193"
+    },
+    {
+      "time": "07:03:09",
+      "msg": "SCALP LONG | entrada $71,465 | SL $71,179 | TP $72,580 | size $235"
+    },
+    {
+      "time": "07:03:09",
+      "msg": "\u274c CERRADO STOP_LOSS | exit $71,021 | P&L -3.76 (-4.0%)"
+    },
+    {
+      "time": "04:54:49",
       "msg": "HOLD \u2014 SHORT activo | ADX:29 CVD:\u2191"
     },
     {
-      "time": "23:18:08",
-      "msg": "HOLD \u2014 SHORT activo | ADX:30 CVD:\u2191"
+      "time": "01:57:28",
+      "msg": "SCALP SHORT | entrada $70,738 | SL $71,021 | TP $69,635 | size $94"
     },
     {
-      "time": "23:17:37",
-      "msg": "HOLD \u2014 SHORT activo | ADX:36 CVD:\u2193"
+      "time": "01:57:28",
+      "msg": "\u274c CERRADO STOP_LOSS | exit $70,835 | P&L -9.45 (-4.0%)"
     },
     {
-      "time": "23:17:07",
-      "msg": "HOLD \u2014 SHORT activo | ADX:36 CVD:\u2193"
+      "time": "23:56:11",
+      "msg": "HOLD \u2014 LONG activo | ADX:41 CVD:\u2193"
     },
     {
-      "time": "23:16:36",
-      "msg": "HOLD \u2014 SHORT activo | ADX:36 CVD:\u2193"
+      "time": "23:55:40",
+      "msg": "HOLD \u2014 LONG activo | ADX:46 CVD:\u2191"
     },
     {
-      "time": "23:16:06",
-      "msg": "HOLD \u2014 SHORT activo | ADX:37 CVD:\u2193"
+      "time": "23:55:10",
+      "msg": "HOLD \u2014 LONG activo | ADX:46 CVD:\u2191"
     },
     {
-      "time": "23:15:36",
-      "msg": "HOLD \u2014 SHORT activo | ADX:35 CVD:\u2193"
+      "time": "23:54:40",
+      "msg": "HOLD \u2014 LONG activo | ADX:44 CVD:\u2191"
     },
     {
-      "time": "23:15:05",
-      "msg": "HOLD \u2014 SHORT activo | ADX:34 CVD:\u2193"
+      "time": "23:54:09",
+      "msg": "HOLD \u2014 LONG activo | ADX:44 CVD:\u2191"
     },
     {
-      "time": "23:14:35",
-      "msg": "SCALP SHORT | entrada $70,812 | SL $71,096 | TP $69,708 | size $94"
+      "time": "23:53:39",
+      "msg": "HOLD \u2014 LONG activo | ADX:42 CVD:\u2191"
     },
     {
-      "time": "23:14:04",
-      "msg": "\u274c CERRADO SIGNAL | exit $70,799 | P&L -1.87 (-0.8%)"
+      "time": "23:53:08",
+      "msg": "HOLD \u2014 LONG activo | ADX:43 CVD:\u2191"
     },
     {
-      "time": "23:13:34",
-      "msg": "HOLD \u2014 LONG activo | ADX:28 CVD:\u2193"
+      "time": "23:52:38",
+      "msg": "HOLD \u2014 LONG activo | ADX:40 CVD:\u2191"
     },
     {
-      "time": "23:13:03",
-      "msg": "HOLD \u2014 LONG activo | ADX:28 CVD:\u2193"
+      "time": "23:52:07",
+      "msg": "HOLD \u2014 LONG activo | ADX:38 CVD:\u2191"
     },
     {
-      "time": "23:12:33",
-      "msg": "HOLD \u2014 LONG activo | ADX:28 CVD:\u2193"
+      "time": "23:51:37",
+      "msg": "HOLD \u2014 LONG activo | ADX:35 CVD:\u2191"
     },
     {
-      "time": "23:12:03",
-      "msg": "HOLD \u2014 LONG activo | ADX:29 CVD:\u2193"
+      "time": "23:51:06",
+      "msg": "HOLD \u2014 LONG activo | ADX:35 CVD:\u2191"
     },
     {
-      "time": "23:11:32",
-      "msg": "HOLD \u2014 LONG activo | ADX:28 CVD:\u2191"
+      "time": "23:50:36",
+      "msg": "HOLD \u2014 LONG activo | ADX:33 CVD:\u2191"
     },
     {
-      "time": "23:11:02",
+      "time": "23:50:06",
+      "msg": "HOLD \u2014 LONG activo | ADX:33 CVD:\u2191"
+    },
+    {
+      "time": "23:49:35",
+      "msg": "SCALP LONG | entrada $71,119 | SL $70,835 | TP $72,229 | size $236"
+    },
+    {
+      "time": "23:49:35",
+      "msg": "\u2705 CERRADO MANUAL | exit $71,110 | P&L +4.61 (+1.9%)"
+    },
+    {
+      "time": "23:49:05",
+      "msg": "HOLD \u2014 LONG activo | ADX:29 CVD:\u2191"
+    },
+    {
+      "time": "23:48:34",
+      "msg": "HOLD \u2014 LONG activo | ADX:27 CVD:\u2191"
+    },
+    {
+      "time": "23:48:03",
+      "msg": "HOLD \u2014 LONG activo | ADX:26 CVD:\u2191"
+    },
+    {
+      "time": "23:47:33",
+      "msg": "HOLD \u2014 LONG activo | ADX:24 CVD:\u2191"
+    },
+    {
+      "time": "23:47:02",
+      "msg": "HOLD \u2014 LONG activo | ADX:24 CVD:\u2191"
+    },
+    {
+      "time": "23:46:32",
+      "msg": "HOLD \u2014 LONG activo | ADX:21 CVD:\u2191"
+    },
+    {
+      "time": "23:46:02",
+      "msg": "HOLD \u2014 LONG activo | ADX:20 CVD:\u2191"
+    },
+    {
+      "time": "23:45:31",
+      "msg": "HOLD \u2014 LONG activo | ADX:19 CVD:\u2191"
+    },
+    {
+      "time": "23:45:01",
+      "msg": "HOLD \u2014 LONG activo | ADX:21 CVD:\u2191"
+    },
+    {
+      "time": "23:44:30",
+      "msg": "HOLD \u2014 LONG activo | ADX:22 CVD:\u2191"
+    },
+    {
+      "time": "23:44:00",
+      "msg": "HOLD \u2014 LONG activo | ADX:24 CVD:\u2193"
+    },
+    {
+      "time": "23:43:29",
+      "msg": "HOLD \u2014 LONG activo | ADX:27 CVD:\u2193"
+    },
+    {
+      "time": "23:42:59",
+      "msg": "HOLD \u2014 LONG activo | ADX:27 CVD:\u2193"
+    },
+    {
+      "time": "23:42:29",
+      "msg": "HOLD \u2014 LONG activo | ADX:27 CVD:\u2193"
+    },
+    {
+      "time": "23:41:58",
+      "msg": "HOLD \u2014 LONG activo | ADX:27 CVD:\u2193"
+    },
+    {
+      "time": "23:41:28",
+      "msg": "HOLD \u2014 LONG activo | ADX:27 CVD:\u2193"
+    },
+    {
+      "time": "23:40:57",
+      "msg": "HOLD \u2014 LONG activo | ADX:30 CVD:\u2193"
+    },
+    {
+      "time": "23:40:27",
       "msg": "HOLD \u2014 LONG activo | ADX:32 CVD:\u2193"
     },
     {
-      "time": "23:10:31",
-      "msg": "HOLD \u2014 LONG activo | ADX:36 CVD:\u2191"
+      "time": "23:39:57",
+      "msg": "HOLD \u2014 LONG activo | ADX:32 CVD:\u2193"
     },
     {
-      "time": "23:10:01",
-      "msg": "HOLD \u2014 LONG activo | ADX:36 CVD:\u2193"
-    },
-    {
-      "time": "23:09:31",
-      "msg": "HOLD \u2014 LONG activo | ADX:37 CVD:\u2191"
-    },
-    {
-      "time": "23:09:00",
-      "msg": "HOLD \u2014 LONG activo | ADX:37 CVD:\u2193"
-    },
-    {
-      "time": "23:08:30",
-      "msg": "HOLD \u2014 LONG activo | ADX:37 CVD:\u2193"
-    },
-    {
-      "time": "23:08:19",
-      "msg": "HOLD \u2014 LONG activo | ADX:37 CVD:\u2193"
-    },
-    {
-      "time": "23:07:48",
-      "msg": "HOLD \u2014 LONG activo | ADX:40 CVD:\u2193"
-    },
-    {
-      "time": "23:07:18",
-      "msg": "HOLD \u2014 LONG activo | ADX:40 CVD:\u2193"
-    },
-    {
-      "time": "23:06:47",
-      "msg": "HOLD \u2014 LONG activo | ADX:43 CVD:\u2191"
-    },
-    {
-      "time": "23:06:17",
-      "msg": "HOLD \u2014 LONG activo | ADX:43 CVD:\u2191"
-    },
-    {
-      "time": "23:05:46",
-      "msg": "HOLD \u2014 LONG activo | ADX:44 CVD:\u2191"
-    },
-    {
-      "time": "23:05:16",
-      "msg": "HOLD \u2014 LONG activo | ADX:44 CVD:\u2191"
-    },
-    {
-      "time": "23:04:45",
-      "msg": "HOLD \u2014 LONG activo | ADX:50 CVD:\u2191"
-    },
-    {
-      "time": "23:04:15",
-      "msg": "HOLD \u2014 LONG activo | ADX:52 CVD:\u2191"
-    },
-    {
-      "time": "23:03:45",
-      "msg": "HOLD \u2014 LONG activo | ADX:58 CVD:\u2191"
-    },
-    {
-      "time": "23:03:14",
-      "msg": "HOLD \u2014 LONG activo | ADX:59 CVD:\u2191"
-    },
-    {
-      "time": "23:02:44",
-      "msg": "HOLD \u2014 LONG activo | ADX:60 CVD:\u2191"
-    },
-    {
-      "time": "23:02:14",
-      "msg": "HOLD \u2014 LONG activo | ADX:60 CVD:\u2191"
-    },
-    {
-      "time": "23:01:43",
-      "msg": "HOLD \u2014 LONG activo | ADX:58 CVD:\u2191"
-    },
-    {
-      "time": "23:01:13",
-      "msg": "HOLD \u2014 LONG activo | ADX:58 CVD:\u2191"
-    },
-    {
-      "time": "23:00:42",
-      "msg": "HOLD \u2014 LONG activo | ADX:54 CVD:\u2193"
-    },
-    {
-      "time": "23:00:12",
-      "msg": "HOLD \u2014 LONG activo | ADX:54 CVD:\u2193"
-    },
-    {
-      "time": "22:59:42",
-      "msg": "HOLD \u2014 LONG activo | ADX:53 CVD:\u2193"
-    },
-    {
-      "time": "22:59:11",
-      "msg": "HOLD \u2014 LONG activo | ADX:53 CVD:\u2193"
+      "time": "23:39:26",
+      "msg": "HOLD \u2014 LONG activo | ADX:31 CVD:\u2193"
     }
   ],
-  "btc_price": 70880.1,
-  "rsi": 41.51,
-  "trend": "bullish",
-  "macd_cross": "bearish",
+  "btc_price": 71023.6,
+  "rsi": 44.68,
+  "trend": "bearish",
+  "macd_cross": "bullish",
   "funding_rate": 0,
-  "vol_ratio": 0.52
+  "vol_ratio": 3.78
 }
