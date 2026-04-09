@@ -496,8 +496,8 @@ def analyze_altcoin(indicators: dict, market_data: dict, capital: float, open_po
     else:
         strategy = "RANGE"
 
-    # Sizing: capital dividido en MAX_POSITIONS partes iguales
-    max_position = TOTAL_CAPITAL / MAX_POSITIONS
+    # Sizing: saldo actual de la cuenta / 10
+    max_position = capital / 10
     size = round(max_position * (1.0 if confidence == "HIGH" else 0.7), 2)
 
     return {
