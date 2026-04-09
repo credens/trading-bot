@@ -1,5 +1,3 @@
---- START OF FILE altcoin_bot.py ---
-
 """
 Multi-Altcoin Adaptive Bot
 ===========================
