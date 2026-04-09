@@ -490,7 +490,15 @@ function AltcoinPanel({ data, liveprices, onClose }) {
                     <Badge text={t.strategy} color={stratColor(t.strategy)} />
                     <Badge text={t.exit_reason||"CLOSE"} color={t.exit_reason==="TAKE_PROFIT"?"#00ff88":t.exit_reason==="STOP_LOSS"?"#ff4444":"#bbb"} />
                   </div>
-                  <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontWeight:700 }}>{t.pnl>=0?"+":""}${t.pnl?.toFixed(2)}</span>
+                  <div style={{ textAlign:"right" }}>
+                    <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontWeight:700 }}>{t.pnl>=0?"+":""}${t.pnl?.toFixed(2)}</span>
+                    {(t.size_usdt||t.size)>0 && <span style={{ color:"#888", fontFamily:"monospace", fontSize:11, marginLeft:8 }}>${(t.size_usdt||t.size||0).toFixed(0)}</span>}
+                  </div>
+                </div>
+                <div style={{ display:"flex", gap:14, marginTop:6, fontFamily:"monospace", fontSize:11, flexWrap:"wrap" }}>
+                  {t.entry_price>0 && <span style={{ color:"#bbb" }}>entrada <span style={{ color:"#ccc" }}>${t.entry_price>100?t.entry_price.toFixed(2):t.entry_price.toFixed(4)}</span></span>}
+                  {t.exit_price>0 && <span style={{ color:"#bbb" }}>salida <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444" }}>${t.exit_price>100?t.exit_price.toFixed(2):t.exit_price.toFixed(4)}</span></span>}
+                  {t.pnl_pct!=null && <span style={{ color:t.pnl>=0?"#00ff88aa":"#ff4444aa" }}>{t.pnl_pct>=0?"+":""}{t.pnl_pct.toFixed(1)}%</span>}
                 </div>
                 {(t.exit_time||t.entry_time) && <div style={{ color:"#888", fontSize:10, fontFamily:"monospace", marginTop:4 }}>{new Date(t.exit_time||t.entry_time).toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} — {t.entry_time ? `${((new Date(t.exit_time||t.entry_time)-new Date(t.entry_time))/60000).toFixed(0)}min` : ""}</div>}
               </div>
