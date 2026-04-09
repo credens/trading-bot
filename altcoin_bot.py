@@ -1,3 +1,5 @@
+--- START OF FILE altcoin_bot.py ---
+
 """
 Multi-Altcoin Adaptive Bot
 ===========================
@@ -8,6 +10,7 @@ Multi-Altcoin Adaptive Bot
     * RANGE: oscilación en canal Bollinger
 - Sizing dinámico basado en tamaño de la oportunidad (Kelly fraccionado)
 - Opera en paralelo, máx 10 posiciones simultáneas
+- Trailing Stop Loss y Trailing Take Profit integrados
 - Paper trading por defecto
 
 SETUP:
@@ -41,8 +44,9 @@ MIN_VOLUME_USDT  = float(os.getenv("ALTCOIN_MIN_VOLUME","300000000"))  # $300M �
 TOP_N            = int(os.getenv("ALTCOIN_TOP_N",       "20"))   # escanear top 20 por volumen
 CANDLE_INTERVAL  = os.getenv("ALTCOIN_CANDLE", "5m")            # velas de 5m
 DEFAULT_SL_PCT   = float(os.getenv("ALTCOIN_SL",  "0.006"))     # SL 0.6%
-DEFAULT_TP_PCT   = float(os.getenv("ALTCOIN_TP",  "0.025"))     # TP 2.5% (R:R 4.2:1)
+DEFAULT_TP_PCT   = float(os.getenv("ALTCOIN_TP",  "0.025"))     # TP 2.5% (Activación de TTP)
 TRAILING_TRIGGER = float(os.getenv("ALTCOIN_TRAIL", "0.004"))   # mover SL a BE cuando +0.4%
+TP_CALLBACK_PCT  = float(os.getenv("ALTCOIN_TP_CALLBACK", "0.003")) # Retroceso para cerrar TP (0.3%)
 TIME_LIMIT_MIN   = int(os.getenv("ALTCOIN_TIME_LIMIT", "120"))   # cerrar si stale > 120min
 
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
@@ -61,7 +65,7 @@ EXCLUDE = {"BUSDUSDT", "USDCUSDT", "TUSDUSDT", "USDTUSDT", "BTCUSDT",
            "ONTUSDT", "RIVERUSDT", "HYPEUSDT", "XAGUSDT", "XAUUSDT",
            "PAXGUSDT", "1000PEPEUSDT"}
 
-log.info("Engine: scoring técnico puro")
+log.info("Engine: scoring técnico puro con Trailing SL y TP")
 
 # ─── Binance Client ───────────────────────────────────────────────────────────
 
@@ -317,7 +321,7 @@ def load_state() -> dict:
             state["scanning"] = data.get("scanning", False)
             state["cooldowns"] = data.get("cooldowns", {})
             state["manual_close"] = data.get("manual_close", [])
-            log.info(f"Estado cargado: ${state['capital']:.2f} capital | {len(state['positions'])} posiciones | {len(state['closed_trades'])} trades cerrados | {len(state['cooldowns'])} cooldowns")
+            log.info(f"Estado cargado: ${state['capital']:.2f} capital | {len(state['positions'])} posiciones | {len(state['closed_trades'])} trades cerrados")
             return state
         except Exception as e:
             log.warning(f"Error cargando estado: {e} — iniciando fresh")
@@ -419,7 +423,7 @@ def analyze_altcoin(indicators: dict, market_data: dict, capital: float, open_po
     if atr_pct < 0.05 or rsi != rsi or bb_pct != bb_pct:
         return None
 
-    # ── Scoring: EMA cross + VWAP como señales primarias (estilo scalping) ──
+    # ── Scoring: EMA cross + VWAP como señales primarias ──
     score = 0
     signals = []
 
@@ -514,8 +518,8 @@ def open_position(client, state: dict, symbol: str, analysis: dict, indicators: 
     """Abre posición paper o real."""
     direction = analysis["direction"]
     size_usdt = float(analysis.get("position_size_usdt", 30))
-    sl_pct = float(analysis.get("stop_loss_pct", 0.03))   # default 3%
-    tp_pct = float(analysis.get("take_profit_pct", 0.07))  # default 7% (R:R 2.3:1)
+    sl_pct = float(analysis.get("stop_loss_pct", 0.03))
+    tp_pct = float(analysis.get("take_profit_pct", 0.07))
     price = indicators["price"]
 
     sl = round(price * (1 - sl_pct) if direction == "LONG" else price * (1 + sl_pct), 8)
@@ -530,6 +534,8 @@ def open_position(client, state: dict, symbol: str, analysis: dict, indicators: 
         "size_usdt": size_usdt,
         "stop_loss": sl,
         "take_profit": tp,
+        "tp_trailing_active": False,  # Inicializar TTP
+        "tp_peak_price": price,       # Inicializar Pico TTP
         "confidence": analysis["confidence"],
         "reasoning": analysis.get("reasoning", ""),
         "leverage": LEVERAGE,
@@ -561,15 +567,16 @@ def open_position(client, state: dict, symbol: str, analysis: dict, indicators: 
 
 
 def get_btc_macro(client) -> str:
-    """BTC 1h macro trend: bullish / bearish / soft_bearish / soft_bullish.
-    Solo bloquea entradas en tendencias fuertes (gap > 1.5%)."""
+    """BTC 1h macro trend: bullish / bearish / soft_bearish / soft_bullish."""
     try:
         klines = client.futures_klines(symbol="BTCUSDT", interval="1h", limit=210)
         closes = pd.Series([float(k[4]) for k in klines])
-        ema50  = closes.ewm(span=50,  adjust=False).mean().iloc[-1]
-        ema200 = closes.ewm(span=200, adjust=False).mean().iloc[-1]
-        gap_pct = abs(ema50 - ema200) / ema200 * 100
-        if ema50 > ema200:
+        ema50  = closes.ewm(span=50,  adjust=False).mean()
+        ema200 = closes.ewm(span=200, adjust=False).mean()
+        ema50_cur = ema50.iloc[-1]
+        ema200_cur = ema200.iloc[-1]
+        gap_pct = abs(ema50_cur - ema200_cur) / ema200_cur * 100
+        if ema50_cur > ema200_cur:
             return "bullish" if gap_pct > 1.5 else "soft_bullish"
         else:
             return "bearish" if gap_pct > 1.5 else "soft_bearish"
@@ -608,7 +615,7 @@ def _close_position(state, symbol, pos, exit_price, exit_reason, note=""):
 
 
 def check_positions(client, state: dict, scenario=None):
-    """Verifica posiciones abiertas: SL/TP, trailing stop, time limit, emergency."""
+    """Verifica posiciones abiertas: SL/TP, trailing stop loss y TRAILING TAKE PROFIT."""
     to_close = []
     now = datetime.now()
 
@@ -630,15 +637,12 @@ def check_positions(client, state: dict, scenario=None):
                 current_price = entry * 0.01
 
             sl = pos["stop_loss"]
-            tp = pos["take_profit"]
+            tp_activation = pos["take_profit"]
 
             raw_change    = (current_price - entry) / entry
             unrealized_pct = (raw_change if direction == "LONG" else -raw_change) * lev
 
-            # ── Trailing stop dinámico (ATR-based — acompaña el movimiento) ──
-            raw_move = abs(raw_change)
-
-            # Actualizar best_price en la posición
+            # ── 1. TRAILING STOP LOSS (Piso dinámico) ──
             if "best_price" not in pos or pos["best_price"] is None:
                 pos["best_price"] = current_price
             if direction == "LONG":
@@ -651,66 +655,76 @@ def check_positions(client, state: dict, scenario=None):
 
             base_trigger = scenario.get("alt_trailing_trigger", TRAILING_TRIGGER) if scenario else TRAILING_TRIGGER
 
-            if profit_raw >= base_trigger:  # mover SL cuando profit >= trigger base
-                # Distancia dinámica: % del precio que se reduce con el profit
+            if profit_raw >= base_trigger:
                 if profit_raw < base_trigger * 2:
-                    trail_pct = 0.008     # 0.8% — zona breakeven
+                    trail_pct = 0.008
                 elif profit_raw < base_trigger * 4:
-                    trail_pct = 0.005     # 0.5% — lock profit
+                    trail_pct = 0.005
                 else:
-                    trail_pct = 0.003     # 0.3% — trailing ajustado
+                    trail_pct = 0.003
 
                 if direction == "LONG":
                     new_sl = round(best * (1 - trail_pct), 8)
                     if new_sl > pos["stop_loss"]:
                         pos["stop_loss"] = new_sl
                         pos["trailing_activated"] = True
-                        state["positions"][symbol] = pos
-                        log.info(f"  📍 TRAILING {symbol}: SL → ${new_sl:.6f} (profit +{profit_raw*100:.2f}%, best ${best:.4f}, dist {trail_pct*100:.1f}%)")
                 else:
                     new_sl = round(best * (1 + trail_pct), 8)
                     if new_sl < pos["stop_loss"]:
                         pos["stop_loss"] = new_sl
                         pos["trailing_activated"] = True
-                        state["positions"][symbol] = pos
-                        log.info(f"  📍 TRAILING {symbol}: SL → ${new_sl:.6f} (profit +{profit_raw*100:.2f}%, best ${best:.4f}, dist {trail_pct*100:.1f}%)")
 
-            # ── Condiciones de cierre ─────────────────────────────────────────
-            hit_tp = (direction == "LONG" and current_price >= tp) or \
-                     (direction == "SHORT" and current_price <= tp)
+            # ── 2. TRAILING TAKE PROFIT (Techo dinámico) ──
+            hit_tp_trigger = (direction == "LONG" and current_price >= tp_activation) or \
+                             (direction == "SHORT" and current_price <= tp_activation)
+            
+            if hit_tp_trigger and not pos.get("tp_trailing_active"):
+                pos["tp_trailing_active"] = True
+                pos["tp_peak_price"] = current_price
+                log.info(f"  🚀 TTP ACTIVADO en {symbol}: Precio alcanzó TP. Siguiendo tendencia...")
+
+            if pos.get("tp_trailing_active"):
+                # Actualizar el pico del TP
+                if direction == "LONG":
+                    pos["tp_peak_price"] = max(pos["tp_peak_price"], current_price)
+                    exit_threshold = pos["tp_peak_price"] * (1 - TP_CALLBACK_PCT)
+                    if current_price <= exit_threshold:
+                        _close_position(state, symbol, pos, current_price, "TRAILING_TP", f"Pico: ${pos['tp_peak_price']:.4f}")
+                        to_close.append(symbol)
+                        continue
+                else: # SHORT
+                    pos["tp_peak_price"] = min(pos["tp_peak_price"], current_price)
+                    exit_threshold = pos["tp_peak_price"] * (1 + TP_CALLBACK_PCT)
+                    if current_price >= exit_threshold:
+                        _close_position(state, symbol, pos, current_price, "TRAILING_TP", f"Pico: ${pos['tp_peak_price']:.4f}")
+                        to_close.append(symbol)
+                        continue
+
+            # ── 3. CONDICIONES DE CIERRE (SL, Emergency, Time) ──
             hit_sl = (direction == "LONG" and current_price <= pos["stop_loss"]) or \
                      (direction == "SHORT" and current_price >= pos["stop_loss"])
             emergency = unrealized_pct < -0.20
-
-            # Time limit: cerrar posición stale después de TIME_LIMIT_MIN
             entry_dt = datetime.fromisoformat(pos["entry_time"])
             time_expired = (now - entry_dt).total_seconds() / 60 >= TIME_LIMIT_MIN
 
-            if hit_tp or hit_sl or emergency or time_expired:
-                if emergency and not hit_sl:
-                    exit_reason = "EMERGENCY_EXIT"
-                    exit_price  = current_price
-                    log.warning(f"  🚨 EMERGENCY EXIT {symbol}: {unrealized_pct*100:.1f}%")
-                elif time_expired and not hit_tp and not hit_sl:
-                    exit_reason = "TIME_LIMIT"
-                    exit_price  = current_price
-                    log.info(f"  ⏰ TIME_LIMIT {symbol}: {TIME_LIMIT_MIN}min expirado")
-                else:
-                    exit_reason = "TAKE_PROFIT" if hit_tp else "STOP_LOSS"
-                    exit_price  = tp if hit_tp else pos["stop_loss"]
-
-                _close_position(state, symbol, pos, exit_price, exit_reason)
+            if hit_sl or emergency or time_expired:
+                if emergency: exit_reason = "EMERGENCY_EXIT"
+                elif time_expired: exit_reason = "TIME_LIMIT"
+                else: exit_reason = "STOP_LOSS"
+                
+                _close_position(state, symbol, pos, current_price, exit_reason)
                 to_close.append(symbol)
 
                 if exit_reason in ("STOP_LOSS", "EMERGENCY_EXIT") and not pos.get("trailing_activated"):
-                    cooldown_until = (now + timedelta(minutes=5)).isoformat()
-                    state.setdefault("cooldowns", {})[symbol] = cooldown_until
+                    state.setdefault("cooldowns", {})[symbol] = (now + timedelta(minutes=5)).isoformat()
+            else:
+                state["positions"][symbol] = pos # Guardar actualizaciones de best_price/peak
 
         except Exception as e:
             log.warning(f"Error verificando {symbol}: {e}")
 
     for sym in to_close:
-        del state["positions"][sym]
+        if sym in state["positions"]: del state["positions"][sym]
 
 
 # ─── Main Loop ────────────────────────────────────────────────────────────────
@@ -737,24 +751,9 @@ def run_cycle(client):
                 try:
                     ticker = client.futures_ticker(symbol=sym)
                     price = float(ticker["lastPrice"])
-                    pos = state["positions"][sym]
-                    direction = pos["direction"]
-                    entry = pos["entry_price"]
-                    pnl_pct = ((price-entry)/entry if direction=="LONG" else (entry-price)/entry) * pos.get("leverage",3)
-                    pnl = round(pos["size_usdt"] * pnl_pct, 2)
-                    trade = {**pos, "exit_price": price, "exit_time": datetime.now().isoformat(),
-                             "exit_reason": "MANUAL", "pnl": pnl, "pnl_pct": round(pnl_pct*100,2), "status":"CLOSED"}
-                    state["closed_trades"].append(trade)
-                    state["capital"] += pos["size_usdt"] + pnl
-                    state["total_pnl"] += pnl
+                    _close_position(state, sym, state["positions"][sym], price, "MANUAL")
                     del state["positions"][sym]
-                    add_log(state, f"🛑 MANUAL CLOSE {sym} @ ${price:.4f} | P&L {'+' if pnl>=0 else ''}${pnl:.2f}")
                     log.info(f"  ✅ {sym} cerrado manualmente")
-                    try:
-                        _log_trade({**trade, "bot": "altcoins", "symbol": sym,
-                                    "size": pos["size_usdt"], "leverage": LEVERAGE})
-                    except Exception:
-                        pass
                 except Exception as e:
                     log.error(f"Error cerrando {sym}: {e}")
         state["manual_close"] = []
@@ -791,26 +790,23 @@ def run_cycle(client):
     # Filtrar las que ya tienen posición o están en cooldown
     now = datetime.now()
     cooldowns = state.get("cooldowns", {})
-    # Limpiar cooldowns expirados (manejar timezones)
     def parse_dt(s):
         try:
             dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
             return dt.replace(tzinfo=None) if dt.tzinfo else dt
         except Exception:
             return datetime.min
-    cooldowns = {s: t for s, t in cooldowns.items() if parse_dt(t) > now}  # limpia expirados
+    cooldowns = {s: t for s, t in cooldowns.items() if parse_dt(t) > now}
     state["cooldowns"] = cooldowns
 
-    # Blacklist dinámica: símbolos con WR < 40% después de ≥8 trades
+    # Blacklist dinámica
     sym_stats: dict[str, dict] = {}
     for t in state.get("closed_trades", []):
         s = t.get("symbol", "")
-        if not s:
-            continue
+        if not s: continue
         st = sym_stats.setdefault(s, {"wins": 0, "total": 0})
         st["total"] += 1
-        if t.get("pnl", 0) > 0:
-            st["wins"] += 1
+        if t.get("pnl", 0) > 0: st["wins"] += 1
     dynamic_blacklist = {
         s for s, st in sym_stats.items()
         if st["total"] >= 8 and (st["wins"] / st["total"]) < 0.40
@@ -824,12 +820,9 @@ def run_cycle(client):
         and a["symbol"] not in cooldowns
         and a["symbol"] not in dynamic_blacklist
     ]
-    if len(candidates) < len(altcoins):
-        skipped = [s for s in cooldowns]
-        log.info(f"  En cooldown (cierre manual): {skipped}")
-    # Escenario ya detectado arriba (cached 5 min)
-    log.info(f"  Escenario: {scenario['name']} | bias={scenario['direction']} | strategies={scenario.get('alt_strategies', [])}")
-    state["btc_macro"] = scenario["direction"]  # compat dashboard
+
+    log.info(f"  Escenario: {scenario['name']} | bias={scenario['direction']}")
+    state["btc_macro"] = scenario["direction"]
 
     log.info(f"\nAnalizando {min(len(candidates), slots*2)} candidatos (5m candles)...")
     state["scanning"] = True
@@ -840,36 +833,28 @@ def run_cycle(client):
     analyzed = 0
 
     for coin in candidates:
-        if analyzed >= slots * 2:  # analizar hasta 2x los slots disponibles
-            break
+        if analyzed >= slots * 2: break
 
         symbol = coin["symbol"]
         indicators = get_indicators(client, symbol)
-        if not indicators:
-            continue
+        if not indicators: continue
 
         analyzed += 1
-        log.info(f"  {symbol}: EMA={indicators['ema_trend']} cross={'↑' if indicators['cross_bullish'] else '↓' if indicators['cross_bearish'] else '-'} | VWAP{indicators['price_vs_vwap']:+.2f}% | RSI={indicators['rsi']:.0f} | Vol={indicators['vol_ratio']:.1f}x")
-
-        # Contar longs y shorts abiertos para pasar al prompt
         open_longs = sum(1 for p in state["positions"].values() if p.get("direction") == "LONG")
         open_shorts = sum(1 for p in state["positions"].values() if p.get("direction") == "SHORT")
+        
         analysis = analyze_altcoin(indicators, coin, capital, open_count, open_longs, open_shorts)
-        if not analysis:
-            continue
+        if not analysis: continue
 
         strategy = analysis.get("strategy", "SKIP")
         direction = analysis.get("direction", "SKIP")
         confidence = analysis.get("confidence", "LOW")
 
-        # ── Filtro por escenario: estrategia + dirección ──
+        # Filtro por escenario
         allowed_strats = scenario.get("alt_strategies", ["RANGE", "MOMENTUM", "MEAN_REVERSION"])
         if strategy not in allowed_strats and strategy not in ("EMA_CROSS", "SKIP"):
-            log.info(f"    🚫 {strategy} desactivada en {scenario['name']} (permitidas: {allowed_strats})")
             continue
-        # Bloqueo de dirección contra-tendencia
         if scenario.get("alt_block_counter") and not is_with_trend(direction, scenario):
-            log.info(f"    🚫 {direction} bloqueado — contra-tendencia en {scenario['name']}")
             continue
 
         # Aplicar multiplicadores del escenario
@@ -877,101 +862,49 @@ def run_cycle(client):
         analysis["position_size_usdt"] = analysis["position_size_usdt"] * scenario.get("alt_size_mult", 1.0)
 
         scan_entry = {
-            "symbol": symbol,
-            "rsi": indicators["rsi"],
-            "bb_pct": indicators["bb_pct"],
-            "vol_ratio": indicators["vol_ratio"],
-            "hist_vol": indicators["hist_vol"],
-            "trend": indicators["trend"],
-            "macd_cross": indicators["macd_cross"],
-            "change_24h": coin.get("change_24h", 0),
-            "strategy": strategy,
-            "direction": direction,
-            "confidence": confidence,
-            "reasoning": analysis.get("reasoning", "") if analysis else "",
-            "size_usdt": analysis.get("position_size_usdt", 0) if analysis else 0,
-            "scanned_at": datetime.now().strftime("%H:%M:%S"),
+            "symbol": symbol, "rsi": indicators["rsi"], "strategy": strategy,
+            "direction": direction, "confidence": confidence, "scanned_at": datetime.now().strftime("%H:%M:%S"),
         }
         state["last_scan"].append(scan_entry)
-        save_state(state)  # guardar en tiempo real
-
-        if strategy == "SKIP" or direction == "SKIP" or confidence == "LOW":
-            log.info(f"    → SKIP ({strategy}, {confidence})")
-            continue
-
-        # Log de dirección vs tendencia (informativo)
-        trend = indicators.get("trend", "neutral")
-        if trend == "bullish" and direction == "SHORT":
-            log.info(f"    → SHORT contra tendencia bullish (mean reversion)")
-        elif trend == "bearish" and direction == "LONG":
-            log.info(f"    → LONG contra tendencia bearish (mean reversion)")
-
-        log.info(f"    → {strategy} {direction} | {confidence} | {analysis.get('reasoning', '')[:60]}")
-        opportunities.append((indicators, coin, analysis))
-
-        time.sleep(0.3)  # throttle API
+        
+        if strategy != "SKIP" and direction != "SKIP" and confidence != "LOW":
+            opportunities.append((indicators, coin, analysis))
+        
+        time.sleep(0.3)
 
     # 4. Ejecutar mejores oportunidades
-    # Ordenar por confidence y size
     conf_order = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
-    opportunities.sort(key=lambda x: (conf_order.get(x[2].get("confidence","LOW"), 0),
-                                       x[2].get("position_size_usdt", 0)), reverse=True)
+    opportunities.sort(key=lambda x: (conf_order.get(x[2].get("confidence","LOW"), 0), x[2].get("position_size_usdt", 0)), reverse=True)
 
     executed = 0
     for indicators, coin, analysis in opportunities[:slots]:
-        if capital < 20:
-            log.warning("Capital insuficiente.")
-            break
-        # Safety: recheck volume just before opening (avoid tokens that lost liquidity)
-        try:
-            fresh_ticker = client.futures_ticker(symbol=coin["symbol"])
-            fresh_vol = float(fresh_ticker.get("quoteVolume", 0))
-            if fresh_vol < MIN_VOLUME_USDT * 0.5:
-                log.warning(f"  ⚠️  {coin['symbol']}: volumen caído a ${fresh_vol/1e6:.1f}M — SKIP")
-                continue
-        except Exception:
-            pass
+        if capital < 20: break
         open_position(client, state, coin["symbol"], analysis, indicators)
         open_count += 1
         executed += 1
 
     state["scanning"] = False
-    log.info(f"\nCiclo completo: {executed} nuevas posiciones | Total abiertas: {open_count}")
     save_state(state)
 
     # Drawdown check
     from drawdown_monitor import check_drawdown
-    capital = state.get("capital", TOTAL_CAPITAL)
-    peak = state.get("peak_capital", capital)
-    check_drawdown("altcoins", capital, TOTAL_CAPITAL, peak, STATE_FILE)
+    check_drawdown("altcoins", state["capital"], TOTAL_CAPITAL, state.get("peak_capital", state["capital"]), STATE_FILE)
 
 
 def run_forever():
-    log.info("🤖 Multi-Altcoin Bot — estilo scalping (5m)")
-    log.info(f"   Modo: {'DRY RUN' if DRY_RUN else '⚠️  REAL'}")
-    log.info(f"   Capital: ${TOTAL_CAPITAL} | Leverage: {LEVERAGE}x | Max posiciones: {MAX_POSITIONS}")
-    log.info(f"   Candles: {CANDLE_INTERVAL} | SL: {DEFAULT_SL_PCT*100:.1f}% | TP: {DEFAULT_TP_PCT*100:.1f}%")
-    log.info(f"   Top {TOP_N} altcoins (>${MIN_VOLUME_USDT/1e6:.0f}M vol) | Ciclo: {INTERVAL_MINUTES} min")
-
+    log.info("🤖 Multi-Altcoin Bot — scalping 5m")
     client = get_client()
 
     while True:
         try:
             run_cycle(client)
         except KeyboardInterrupt:
-            log.info("\n🛑 Bot detenido.")
             break
         except Exception as e:
             log.error(f"Error en ciclo: {e}", exc_info=True)
 
-        log.info(f"\n⏰ Próximo ciclo en {INTERVAL_MINUTES} minutos...")
         time.sleep(INTERVAL_MINUTES * 60)
 
 
 if __name__ == "__main__":
-    import sys
-    client = get_client()
-    if len(sys.argv) > 1 and sys.argv[1] == "once":
-        run_cycle(client)
-    else:
-        run_forever()
+    run_forever()
