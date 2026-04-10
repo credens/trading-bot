@@ -1,11 +1,11 @@
 """
-Multi-Altcoin Adaptive Bot - v3.0 (FULL EXPERT VERSION)
+Multi-Altcoin Adaptive Bot - v3.1 (FULL EXPERT & STABLE)
 ======================================================
-- Capital Reset: $200 (Configurable vía .env)
-- Anti-Revenge Trading: Cooldown de 15 min y bloqueo de duplicados.
+- Capital Baseline: Sincronizado con .env
+- Anti-Revenge Trading: Cooldown de 15 min y bloqueo atómico de duplicados.
+- Fixed Math: Protecciones contra división por cero en indicadores.
 - Expert Scoring: EMA Cross, VWAP, RSI, MACD (3,10,5), Bollinger, ATR.
 - Trailing: SL dinámico + TP dinámico (TTP).
-- Dashboard: Full logs, win rate, PnL raw y capital dinámico.
 """
 
 import os
@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 
 LEVERAGE         = int(os.getenv("ALTCOIN_LEVERAGE",    "20"))   
 MAX_POSITIONS    = int(os.getenv("ALTCOIN_MAX_POSITIONS","10"))   
-TOTAL_CAPITAL    = float(os.getenv("ALTCOIN_CAPITAL",   "200"))  # Capital de inicio
+TOTAL_CAPITAL    = float(os.getenv("ALTCOIN_CAPITAL",   "200"))  
 DRY_RUN          = os.getenv("DRY_RUN", "true").lower() == "true"
 INTERVAL_MINUTES = int(os.getenv("ALTCOIN_INTERVAL",   "3"))
 MIN_VOLUME_USDT  = float(os.getenv("ALTCOIN_MIN_VOLUME","300000000"))  
@@ -40,7 +40,7 @@ TRAILING_TRIGGER = float(os.getenv("ALTCOIN_TRAIL", "0.004"))
 TP_CALLBACK_PCT  = float(os.getenv("ALTCOIN_TP_CALLBACK", "0.003")) 
 TIME_LIMIT_MIN   = int(os.getenv("ALTCOIN_TIME_LIMIT", "120"))   
 
-LOSS_COOLDOWN_MIN = 15 # Bloqueo tras pérdida
+LOSS_COOLDOWN_MIN = 15 
 
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
@@ -92,16 +92,17 @@ def get_indicators(client, symbol: str) -> Optional[dict]:
 
         close, high, low, volume = df["close"], df["high"], df["low"], df["volume"]
 
-        # EMA Scalping Setup
+        # EMA Setup
         ema9  = close.ewm(span=9,  adjust=False).mean()
         ema21 = close.ewm(span=21, adjust=False).mean()
         cross_bull = ema9.iloc[-2] <= ema21.iloc[-2] and ema9.iloc[-1] > ema21.iloc[-1]
         cross_bear = ema9.iloc[-2] >= ema21.iloc[-2] and ema9.iloc[-1] < ema21.iloc[-1]
 
-        # VWAP (78 velas de 5m = 6.5h mercado)
+        # VWAP con protección ZeroDivision
         tp = (high + low + close) / 3
-        vwap = float((tp * volume).rolling(78).sum().iloc[-1] / volume.rolling(78).sum().iloc[-1])
-        p_vs_v = (close.iloc[-1] - vwap) / vwap * 100
+        vol_sum = volume.rolling(78).sum().iloc[-1]
+        vwap = float((tp * volume).rolling(78).sum().iloc[-1] / vol_sum) if vol_sum > 0 else float(close.iloc[-1])
+        p_vs_v = ((close.iloc[-1] - vwap) / vwap * 100) if vwap > 0 else 0
 
         # RSI 14
         delta = close.diff()
@@ -115,22 +116,24 @@ def get_indicators(client, symbol: str) -> Optional[dict]:
         macd_h = float((macd - signal).iloc[-1])
         macd_c = "bullish" if macd_h > 0 and (macd-signal).iloc[-2] <= 0 else "bearish" if macd_h < 0 and (macd-signal).iloc[-2] >= 0 else "neutral"
 
-        # Bollinger & Volatilidad
+        # Bollinger & ATR con protección ZeroDivision
         sma20, std20 = close.rolling(20).mean(), close.rolling(20).std()
-        bb_pct = float(((close.iloc[-1] - (sma20.iloc[-1] - 2*std20.iloc[-1])) / (4*std20.iloc[-1])))
+        std_val = std20.iloc[-1]
+        bb_pct = float(((close.iloc[-1] - (sma20.iloc[-1] - 2*std_val)) / (4*std_val))) if std_val > 0 else 0.5
+        
         tr = pd.concat([high-low, (high-close.shift()).abs(), (low-close.shift()).abs()], axis=1).max(axis=1)
         atr_pct = float(tr.rolling(14).mean().iloc[-1] / close.iloc[-1] * 100)
 
-        vol_ratio = float(volume.iloc[-1] / volume.rolling(20).mean().iloc[-1])
-        hist_vol = float(close.pct_change().rolling(20).std().iloc[-1] * 100)
+        v_mean = volume.rolling(20).mean().iloc[-1]
+        vol_ratio = float(volume.iloc[-1] / v_mean) if v_mean > 0 else 1.0
+        
         ema50, ema200 = close.ewm(span=50).mean().iloc[-1], close.ewm(span=200).mean().iloc[-1]
 
         return {
             "symbol": symbol, "price": close.iloc[-1], "ema_trend": "bullish" if ema9.iloc[-1] > ema21.iloc[-1] else "bearish",
             "cross_bullish": cross_bull, "cross_bearish": cross_bear, "vwap": round(vwap, 6), "price_vs_vwap": round(p_vs_v, 3),
             "rsi": round(rsi, 2), "macd_hist": round(macd_h, 6), "macd_cross": macd_c, "bb_pct": round(bb_pct, 3),
-            "atr_pct": round(atr_pct, 3), "vol_ratio": round(vol_ratio, 2), "hist_vol": round(hist_vol, 3),
-            "trend": "bullish" if ema50 > ema200 else "bearish"
+            "atr_pct": round(atr_pct, 3), "vol_ratio": round(vol_ratio, 2), "trend": "bullish" if ema50 > ema200 else "bearish"
         }
     except Exception as e:
         log.warning(f"Error indicators {symbol}: {e}")
@@ -142,39 +145,31 @@ def analyze_altcoin(indicators, market_data, capital, open_pos, open_l, open_s) 
     score = 0
     sigs = []
     
-    # 1. EMA Cross & Trend (Primario)
-    if indicators["cross_bullish"]: score += 3; sigs.append("EMA Cross Up ↑")
+    if indicators["cross_bullish"]: score += 3; sigs.append("EMA Cross Up")
     elif indicators["ema_trend"] == "bullish": score += 1
     
-    if indicators["cross_bearish"]: score -= 3; sigs.append("EMA Cross Down ↓")
+    if indicators["cross_bearish"]: score -= 3; sigs.append("EMA Cross Down")
     elif indicators["ema_trend"] == "bearish": score -= 1
 
-    # 2. VWAP
-    if indicators["price_vs_vwap"] > 0.1: score += 1
-    elif indicators["price_vs_vwap"] < -0.1: score -= 1
-
-    # 3. MACD & RSI
-    if indicators["macd_cross"] == "bullish": score += 2; sigs.append("MACD Bullish")
-    elif indicators["macd_cross"] == "bearish": score -= 2; sigs.append("MACD Bearish")
+    if indicators["macd_cross"] == "bullish": score += 2
+    elif indicators["macd_cross"] == "bearish": score -= 2
     
-    if indicators["rsi"] < 30: score += 2; sigs.append(f"RSI OS {indicators['rsi']}")
-    elif indicators["rsi"] > 70: score -= 2; sigs.append(f"RSI OB {indicators['rsi']}")
+    if indicators["rsi"] < 30: score += 2; sigs.append("RSI OS")
+    elif indicators["rsi"] > 70: score -= 2; sigs.append("RSI OB")
 
-    # 4. Volumen
-    if indicators["vol_ratio"] > 1.8: score = int(score * 1.3); sigs.append("High Vol")
+    if indicators["vol_ratio"] > 1.8: score = int(score * 1.3)
 
     if abs(score) < 2: return None
 
     direction = "LONG" if score > 0 else "SHORT"
     conf = "HIGH" if abs(score) >= 4 else "MEDIUM"
     
-    # Sizing Dinámico para $200
     size = round((capital / 10) * (1.0 if conf == "HIGH" else 0.7), 2)
-    if size < 15: size = 15 # Margen mínimo operativo
+    if size < 15: size = 15 
 
     return {
         "strategy": "MOMENTUM" if indicators["vol_ratio"] > 1.4 else "RANGE",
-        "direction": direction, "confidence": conf, "reasoning": f"Score {score} | {', '.join(sigs[:2])}",
+        "direction": direction, "confidence": conf, "reasoning": f"Score {score} | {', '.join(sigs[:1])}",
         "stop_loss_pct": DEFAULT_SL_PCT, "take_profit_pct": DEFAULT_TP_PCT, "position_size_usdt": size
     }
 
@@ -190,11 +185,9 @@ def load_state() -> dict:
         try:
             with open(STATE_FILE, "r") as f:
                 data = json.load(f)
-            # Fix: Asegurar que posiciones sea dict
             if not isinstance(data.get("positions"), dict): data["positions"] = {}
-            # Sync capital si está vacío
-            if not data.get("closed_trades") and data.get("capital") != TOTAL_CAPITAL:
-                data["capital"] = TOTAL_CAPITAL
+            # Sincronización de seguridad con capital inicial del .env
+            if not data.get("closed_trades"): data["capital"] = TOTAL_CAPITAL
             return data
         except: return default
     return default
@@ -208,7 +201,7 @@ def save_state(state: dict):
     
     closed = state.get("closed_trades", [])
     state["total_pnl"] = round(sum(t.get("pnl", 0) for t in closed), 2)
-    # Capital Actual = Capital Inicial + PNL Realizado - Capital Comprometido
+    # Capital Actualizado
     current_cap = round(TOTAL_CAPITAL + state["total_pnl"] - sum(p["size_usdt"] for p in state["positions"].values()), 2)
     
     dashboard = {
@@ -216,7 +209,6 @@ def save_state(state: dict):
         "bot": "altcoins",
         "capital": current_cap,
         "current_capital": current_cap,
-        "total_pnl_pct": round((state["total_pnl"] / TOTAL_CAPITAL) * 100, 2),
         "win_rate": round(len([t for t in closed if t.get("pnl",0) > 0]) / max(1, len(closed)) * 100, 1),
         "total_trades": len(closed),
         "all_closed_trades": closed,
@@ -260,7 +252,7 @@ def open_position(client, state, symbol, analysis, indicators):
             client.futures_create_order(symbol=symbol, side=side, type="MARKET", quantity=qty)
             state["positions"][symbol] = pos
             add_log(state, f"✅ REAL {direction} {symbol} @ ${price:.4f}")
-        except Exception as e: log.error(f"Error opening {symbol}: {e}")
+        except Exception as e: log.error(f"Error opening real {symbol}: {e}")
 
 def _close_position(state, symbol, pos, exit_price, exit_reason):
     entry, direction, lev = pos["entry_price"], pos["direction"], pos["leverage"]
@@ -272,7 +264,6 @@ def _close_position(state, symbol, pos, exit_price, exit_reason):
     
     if pnl < 0:
         state["cooldowns"][symbol] = (datetime.now() + timedelta(minutes=LOSS_COOLDOWN_MIN)).isoformat()
-        log.warning(f"  🚫 {symbol} bloqueado 15m por pérdida.")
 
     if symbol in state["positions"]: del state["positions"][symbol]
     
@@ -292,7 +283,7 @@ def check_positions(client, state, scenario=None):
             entry, direction, sl, tp_act = pos["entry_price"], pos["direction"], pos["stop_loss"], pos["take_profit"]
             lev = pos["leverage"]
 
-            # 1. Trailing Stop Loss (Piso dinámico)
+            # Trailing SL
             if direction == "LONG": pos["best_price"] = max(pos.get("best_price", curr), curr)
             else: pos["best_price"] = min(pos.get("best_price", curr), curr)
             
@@ -304,12 +295,11 @@ def check_positions(client, state, scenario=None):
                     pos["stop_loss"] = sl = new_sl
                     pos["trailing_activated"] = True
 
-            # 2. Trailing Take Profit (TTP)
+            # Trailing TP
             if (direction=="LONG" and curr >= tp_act) or (direction=="SHORT" and curr <= tp_act):
                 if not pos.get("tp_trailing_active"):
                     pos["tp_trailing_active"] = True
                     pos["tp_peak_price"] = curr
-                    log.info(f"  🚀 TTP Activado en {symbol}")
 
             if pos.get("tp_trailing_active"):
                 if direction == "LONG":
@@ -323,13 +313,13 @@ def check_positions(client, state, scenario=None):
                         to_close.append((symbol, curr, "TRAILING_TP"))
                         continue
 
-            # 3. SL / Emergency / Time
+            # SL / Emergencia
             pnl_pct = ((curr - entry)/entry if direction=="LONG" else (entry-curr)/entry) * lev
             hit_sl = (direction=="LONG" and curr <= sl) or (direction=="SHORT" and curr >= sl)
             time_exp = (now - datetime.fromisoformat(pos["entry_time"])).total_seconds()/60 >= TIME_LIMIT_MIN
             
             if hit_sl: to_close.append((symbol, curr, "STOP_LOSS"))
-            elif pnl_pct <= -0.22: to_close.append((symbol, curr, "EMERGENCY"))
+            elif pnl_pct <= -0.25: to_close.append((symbol, curr, "EMERGENCY"))
             elif time_exp: to_close.append((symbol, curr, "TIME_LIMIT"))
 
         except Exception as e: log.error(f"Error check {symbol}: {e}")
@@ -337,17 +327,16 @@ def check_positions(client, state, scenario=None):
     for s, p, r in to_close:
         if s in state["positions"]: _close_position(state, s, state["positions"][s], p, r)
 
-# ─── Main Cycle ───────────────────────────────────────────────────────────────
+# ─── Ciclo Principal ──────────────────────────────────────────────────────────
 
 def run_cycle(client):
     log.info(f"\n{'='*40}\nALTCOIN CYCLE - {datetime.now().strftime('%H:%M:%S')}\n{'='*40}")
     state = load_state()
     now = datetime.now()
 
-    # 1. Cooldown Cleanup
+    # Cooldown Cleanup
     state["cooldowns"] = {s: t for s, t in state.get("cooldowns", {}).items() if datetime.fromisoformat(t) > now}
 
-    # 2. Drawdown & Manual Close
     from drawdown_monitor import is_paused
     if is_paused(STATE_FILE): return
 
@@ -357,12 +346,10 @@ def run_cycle(client):
             _close_position(state, sym, state["positions"][sym], float(t["lastPrice"]), "MANUAL")
     state["manual_close"] = []
 
-    # 3. Position Monitoring
     from market_scenario import detect_scenario
     scenario = detect_scenario(client)
     check_positions(client, state, scenario)
 
-    # 4. Market Scanning
     slots = MAX_POSITIONS - len(state["positions"])
     if slots > 0:
         state["scanning"] = True
@@ -370,7 +357,7 @@ def run_cycle(client):
         save_state(state)
         
         coins = get_top_altcoins(client)
-        # SEGURIDAD CRÍTICA: Filtrar antes de analizar para evitar bugs de ENJ
+        # FILTRO ATÓMICO: Solo analiza si NO está abierta ni en cooldown
         candidates = [c for c in coins if c["symbol"] not in state["positions"] and c["symbol"] not in state["cooldowns"]]
         
         opps = []
@@ -383,29 +370,11 @@ def run_cycle(client):
             
             ana = analyze_altcoin(inds, c, state["capital"], len(state["positions"]), open_l, open_s)
             
-            # Log scan para el Dashboard
-            scan_data = {
-                "symbol": c["symbol"], "rsi": inds["rsi"], "strategy": ana["strategy"] if ana else "SKIP",
-                "direction": ana["direction"] if ana else "SKIP", "confidence": ana["confidence"] if ana else "LOW",
-                "reasoning": ana["reasoning"] if ana else "No signal", "scanned_at": now.strftime("%H:%M:%S")
-            }
-            state["last_scan"].append(scan_data)
-            
-            if ana: opps.append((inds, c, ana))
-            time.sleep(0.2) # Throttle API
+            if ana:
+                opps.append((inds, c, ana))
+                state["last_scan"].append({"symbol": c["symbol"], "strategy": ana["strategy"], "direction": ana["direction"], "confidence": ana["confidence"]})
+            time.sleep(0.2)
         
         opps.sort(key=lambda x: x[2]["position_size_usdt"], reverse=True)
         for inds, coin, ana in opps[:slots]:
-            open_position(client, state, coin["symbol"], ana, inds)
-
-    state["scanning"] = False
-    save_state(state)
-    from drawdown_monitor import check_drawdown
-    check_drawdown("altcoins", state["capital"], TOTAL_CAPITAL, state.get("peak_capital", state["capital"]), STATE_FILE)
-
-if __name__ == "__main__":
-    client = get_client()
-    while True:
-        try: run_cycle(client)
-        except Exception as e: log.error(f"Fatal error: {e}", exc_info=True)
-        time.sleep(INTERVAL_MINUTES * 60)
+            open_position(client, state, coin["symbol"], ana, i
