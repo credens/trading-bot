@@ -604,10 +604,12 @@ def run_cycle(client):
 
     log.info(f"Ciclo completado: {executed} nuevas posiciones abiertas")
 
-    # Drawdown check
+    # Drawdown check — usar capital + valor en posiciones abiertas
     from drawdown_monitor import check_drawdown
-    check_drawdown("altcoins", state.get("capital", TOTAL_CAPITAL), TOTAL_CAPITAL,
-                   state.get("peak_capital", state.get("capital", TOTAL_CAPITAL)), STATE_FILE)
+    pos_value = sum(abs(p.get("size_usdt", 0)) for p in state.get("positions", {}).values())
+    effective_capital = state.get("capital", TOTAL_CAPITAL) + pos_value
+    check_drawdown("altcoins", effective_capital, TOTAL_CAPITAL,
+                   state.get("peak_capital", TOTAL_CAPITAL), STATE_FILE)
 
 
 def run_forever():
