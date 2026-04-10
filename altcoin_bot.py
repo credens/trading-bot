@@ -1,16 +1,25 @@
 """
-Multi-Altcoin Adaptive Bot - v3.1 (FULL EXPERT & STABLE)
-======================================================
-- Capital Baseline: Sincronizado con .env
-- Anti-Revenge Trading: Cooldown de 15 min y bloqueo atómico de duplicados.
-- Fixed Math: Protecciones contra división por cero en indicadores.
-- Expert Scoring: EMA Cross, VWAP, RSI, MACD (3,10,5), Bollinger, ATR.
-- Trailing: SL dinámico + TP dinámico (TTP).
+Multi-Altcoin Adaptive Bot - v4.0 (BUG FIXES + IMPROVEMENTS)
+=============================================================
+- PID Lock: Solo 1 instancia puede correr a la vez.
+- File Locking: fcntl.flock en state read/write.
+- Duplicate Prevention: Re-verifica antes de abrir.
+- Dynamic Cooldown: Emergency=30min, SL=10min, default=5min.
+- Kelly Sizing: Basado en historial si hay suficientes trades.
+- TTP Peak Cap: Limita pico a +15% sobre entry.
+- RSI Simplificado: Solo extremos (<25, >75).
+- Linear Scoring: Sin multiplicador de volumen.
+- Emergency Exit: -10% (era -20%).
+- Time Limit: 60min + early exit a 30min si < -5%.
+- Long/Short Balance: Hard block a 7 por dirección.
 """
 
 import os
+import sys
 import json
 import time
+import fcntl
+import atexit
 import logging
 from datetime import datetime, timedelta
 from trade_logger import log_trade as _log_trade
@@ -26,21 +35,19 @@ log = logging.getLogger(__name__)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-LEVERAGE         = int(os.getenv("ALTCOIN_LEVERAGE",    "20"))   
-MAX_POSITIONS    = int(os.getenv("ALTCOIN_MAX_POSITIONS","10"))   
-TOTAL_CAPITAL    = float(os.getenv("ALTCOIN_CAPITAL",   "200"))  
+LEVERAGE         = int(os.getenv("ALTCOIN_LEVERAGE",    "20"))
+MAX_POSITIONS    = int(os.getenv("ALTCOIN_MAX_POSITIONS","10"))
+TOTAL_CAPITAL    = float(os.getenv("ALTCOIN_CAPITAL",   "200"))
 DRY_RUN          = os.getenv("DRY_RUN", "true").lower() == "true"
 INTERVAL_MINUTES = int(os.getenv("ALTCOIN_INTERVAL",   "3"))
-MIN_VOLUME_USDT  = float(os.getenv("ALTCOIN_MIN_VOLUME","300000000"))  
-TOP_N            = int(os.getenv("ALTCOIN_TOP_N",       "20"))   
-CANDLE_INTERVAL  = os.getenv("ALTCOIN_CANDLE", "5m")            
-DEFAULT_SL_PCT   = float(os.getenv("ALTCOIN_SL",  "0.006"))     
-DEFAULT_TP_PCT   = float(os.getenv("ALTCOIN_TP",  "0.025"))     
-TRAILING_TRIGGER = float(os.getenv("ALTCOIN_TRAIL", "0.004"))   
-TP_CALLBACK_PCT  = float(os.getenv("ALTCOIN_TP_CALLBACK", "0.003")) 
-TIME_LIMIT_MIN   = int(os.getenv("ALTCOIN_TIME_LIMIT", "120"))   
-
-LOSS_COOLDOWN_MIN = 15 
+MIN_VOLUME_USDT  = float(os.getenv("ALTCOIN_MIN_VOLUME","300000000"))
+TOP_N            = int(os.getenv("ALTCOIN_TOP_N",       "20"))
+CANDLE_INTERVAL  = os.getenv("ALTCOIN_CANDLE", "5m")
+DEFAULT_SL_PCT   = float(os.getenv("ALTCOIN_SL",  "0.006"))     # SL 0.6%
+DEFAULT_TP_PCT   = float(os.getenv("ALTCOIN_TP",  "0.025"))     # TP 2.5% (activa TTP)
+TRAILING_TRIGGER = float(os.getenv("ALTCOIN_TRAIL", "0.004"))   # mover SL a BE cuando +0.4%
+TP_CALLBACK_PCT  = float(os.getenv("ALTCOIN_TP_CALLBACK", "0.003"))  # retroceso 0.3% para cerrar TTP
+TIME_LIMIT_MIN   = int(os.getenv("ALTCOIN_TIME_LIMIT", "60"))   # cerrar si stale > 60min
 
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
@@ -48,20 +55,39 @@ BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
 DATA_DIR = Path(__file__).parent / "altcoin_data"
 DATA_DIR.mkdir(exist_ok=True)
 STATE_FILE = DATA_DIR / "state.json"
+LOCK_FILE = DATA_DIR / "altcoin_bot.lock"
 
 EXCLUDE = {"BUSDUSDT", "USDCUSDT", "TUSDUSDT", "USDTUSDT", "BTCUSDT",
            "BTCDOMUSDT", "DEFIUSDT", "BNXUSDT", "1000SHIBUSDT",
            "SIRENUSDT", "LOOMUSDT", "CVPUSDT", "BALUSDT",
-           "1000LUNCUSDT", "LUNA2USDT", "ONTUSDT", "RIVERUSDT", 
+           "1000LUNCUSDT", "LUNA2USDT", "ONTUSDT", "RIVERUSDT",
            "HYPEUSDT", "XAGUSDT", "XAUUSDT", "PAXGUSDT", "1000PEPEUSDT"}
 
-# ─── Binance Client ───────────────────────────────────────────────────────────
+# ─── PID Lock ────────────────────────────────────────────────────────────────
+
+_lock_fd = None
+
+def acquire_lock():
+    """Previene múltiples instancias del bot corriendo simultáneamente."""
+    global _lock_fd
+    _lock_fd = open(LOCK_FILE, 'w')
+    try:
+        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        _lock_fd.write(str(os.getpid()))
+        _lock_fd.flush()
+        log.info(f"🔒 Lock adquirido (PID {os.getpid()})")
+    except BlockingIOError:
+        log.error("⛔ Otra instancia del bot ya está corriendo. Saliendo.")
+        sys.exit(1)
+    atexit.register(lambda: _lock_fd.close())
+
+# ─── Binance Client ──────────────────────────────────────────────────────────
 
 def get_client():
     from binance.client import Client
     return Client(BINANCE_API_KEY, BINANCE_SECRET_KEY)
 
-# ─── Market Scanner ───────────────────────────────────────────────────────────
+# ─── Market Scanner ──────────────────────────────────────────────────────────
 
 def get_top_altcoins(client, n: int = TOP_N) -> list[dict]:
     try:
@@ -82,13 +108,13 @@ def get_top_altcoins(client, n: int = TOP_N) -> list[dict]:
         log.error(f"Error scanner: {e}")
         return []
 
-# ─── Indicadores Expertos ──────────────────────────────────────────────────────
+# ─── Indicadores Expertos ─────────────────────────────────────────────────────
 
 def get_indicators(client, symbol: str) -> Optional[dict]:
     try:
         klines = client.futures_klines(symbol=symbol, interval=CANDLE_INTERVAL, limit=120)
-        df = pd.DataFrame(klines, columns=["ts", "open", "high", "low", "close", "volume", "ct", "qv", "trades", "tbb", "tbq", "ignore"])
-        for col in ["open", "high", "low", "close", "volume"]: df[col] = df[col].astype(float)
+        df = pd.DataFrame(klines, columns=["ts","open","high","low","close","volume","ct","qv","trades","tbb","tbq","ignore"])
+        for col in ["open","high","low","close","volume"]: df[col] = df[col].astype(float)
 
         close, high, low, volume = df["close"], df["high"], df["low"], df["volume"]
 
@@ -98,7 +124,7 @@ def get_indicators(client, symbol: str) -> Optional[dict]:
         cross_bull = ema9.iloc[-2] <= ema21.iloc[-2] and ema9.iloc[-1] > ema21.iloc[-1]
         cross_bear = ema9.iloc[-2] >= ema21.iloc[-2] and ema9.iloc[-1] < ema21.iloc[-1]
 
-        # VWAP con protección ZeroDivision
+        # VWAP
         tp = (high + low + close) / 3
         vol_sum = volume.rolling(78).sum().iloc[-1]
         vwap = float((tp * volume).rolling(78).sum().iloc[-1] / vol_sum) if vol_sum > 0 else float(close.iloc[-1])
@@ -116,80 +142,145 @@ def get_indicators(client, symbol: str) -> Optional[dict]:
         macd_h = float((macd - signal).iloc[-1])
         macd_c = "bullish" if macd_h > 0 and (macd-signal).iloc[-2] <= 0 else "bearish" if macd_h < 0 and (macd-signal).iloc[-2] >= 0 else "neutral"
 
-        # Bollinger & ATR con protección ZeroDivision
+        # Bollinger & ATR
         sma20, std20 = close.rolling(20).mean(), close.rolling(20).std()
         std_val = std20.iloc[-1]
         bb_pct = float(((close.iloc[-1] - (sma20.iloc[-1] - 2*std_val)) / (4*std_val))) if std_val > 0 else 0.5
-        
+
         tr = pd.concat([high-low, (high-close.shift()).abs(), (low-close.shift()).abs()], axis=1).max(axis=1)
         atr_pct = float(tr.rolling(14).mean().iloc[-1] / close.iloc[-1] * 100)
 
         v_mean = volume.rolling(20).mean().iloc[-1]
         vol_ratio = float(volume.iloc[-1] / v_mean) if v_mean > 0 else 1.0
-        
+
         ema50, ema200 = close.ewm(span=50).mean().iloc[-1], close.ewm(span=200).mean().iloc[-1]
 
+        try:
+            funding = client.futures_funding_rate(symbol=symbol, limit=1)
+            funding_rate = float(funding[0]["fundingRate"]) * 100 if funding else 0
+        except Exception:
+            funding_rate = 0
+
         return {
-            "symbol": symbol, "price": close.iloc[-1], "ema_trend": "bullish" if ema9.iloc[-1] > ema21.iloc[-1] else "bearish",
-            "cross_bullish": cross_bull, "cross_bearish": cross_bear, "vwap": round(vwap, 6), "price_vs_vwap": round(p_vs_v, 3),
-            "rsi": round(rsi, 2), "macd_hist": round(macd_h, 6), "macd_cross": macd_c, "bb_pct": round(bb_pct, 3),
-            "atr_pct": round(atr_pct, 3), "vol_ratio": round(vol_ratio, 2), "trend": "bullish" if ema50 > ema200 else "bearish"
+            "symbol": symbol, "price": close.iloc[-1],
+            "ema_trend": "bullish" if ema9.iloc[-1] > ema21.iloc[-1] else "bearish",
+            "cross_bullish": cross_bull, "cross_bearish": cross_bear,
+            "vwap": round(vwap, 6), "price_vs_vwap": round(p_vs_v, 3),
+            "rsi": round(rsi, 2), "macd_hist": round(macd_h, 6), "macd_cross": macd_c,
+            "bb_pct": round(bb_pct, 3), "atr_pct": round(atr_pct, 3),
+            "vol_ratio": round(vol_ratio, 2),
+            "trend": "bullish" if ema50 > ema200 else "bearish",
+            "funding_rate": funding_rate
         }
     except Exception as e:
         log.warning(f"Error indicators {symbol}: {e}")
         return None
 
-# ─── Scoring Técnico ──────────────────────────────────────────────────────────
+# ─── Scoring Técnico ─────────────────────────────────────────────────────────
 
-def analyze_altcoin(indicators, market_data, capital, open_pos, open_l, open_s) -> Optional[dict]:
+def analyze_altcoin(indicators, market_data, capital, open_pos, open_l, open_s, closed_trades=None) -> Optional[dict]:
     score = 0
     sigs = []
-    
+
+    # ── Señales primarias: EMA cross + VWAP ──
     if indicators["cross_bullish"]: score += 3; sigs.append("EMA Cross Up")
     elif indicators["ema_trend"] == "bullish": score += 1
-    
+
     if indicators["cross_bearish"]: score -= 3; sigs.append("EMA Cross Down")
     elif indicators["ema_trend"] == "bearish": score -= 1
 
-    if indicators["macd_cross"] == "bullish": score += 2
-    elif indicators["macd_cross"] == "bearish": score -= 2
-    
-    if indicators["rsi"] < 30: score += 2; sigs.append("RSI OS")
-    elif indicators["rsi"] > 70: score -= 2; sigs.append("RSI OB")
+    pvwap = indicators.get("price_vs_vwap", 0)
+    if pvwap > 0.1: score += 1; sigs.append(f"VWAP +{pvwap:.2f}%")
+    elif pvwap < -0.1: score -= 1; sigs.append(f"VWAP {pvwap:.2f}%")
 
-    if indicators["vol_ratio"] > 1.8: score = int(score * 1.3)
+    # ── Confirmadores: MACD ──
+    if indicators["macd_cross"] == "bullish": score += 2; sigs.append("MACD bull")
+    elif indicators["macd_cross"] == "bearish": score -= 2; sigs.append("MACD bear")
+    elif indicators["macd_hist"] > 0: score += 1
+    elif indicators["macd_hist"] < 0: score -= 1
 
+    # ── RSI — solo extremos (simplificado) ──
+    rsi = indicators.get("rsi", 50)
+    if rsi < 25: score += 2; sigs.append(f"RSI sobrevendido {rsi:.0f}")
+    elif rsi > 75: score -= 2; sigs.append(f"RSI sobrecomprado {rsi:.0f}")
+
+    # ── Volumen — aditivo, no multiplicativo (linear scoring) ──
+    vol_ratio = indicators.get("vol_ratio", 1)
+    if vol_ratio > 1.8:
+        score += 1 if score > 0 else -1
+        sigs.append(f"Vol alto {vol_ratio:.1f}x")
+
+    # ── Funding rate ──
+    funding = indicators.get("funding_rate", 0)
+    if funding > 0.03: score -= 1; sigs.append("Funding alto")
+    elif funding < -0.03: score += 1; sigs.append("Funding neg")
+
+    # ── Sobreextensión 24h ──
+    change_24h = market_data.get("change_24h", 0)
+    if change_24h > 12: score -= 2; sigs.append(f"Pump +{change_24h:.1f}%")
+    elif change_24h < -12: score += 2; sigs.append(f"Dump {change_24h:.1f}%")
+
+    # ── Balance soft penalty ──
+    if open_l > open_s + 1: score -= 1
+    elif open_s > open_l + 1: score += 1
+
+    # ── Hard block: máximo 7 posiciones por dirección ──
+    if open_l >= 7 and score > 0: return None
+    if open_s >= 7 and score < 0: return None
+
+    # ── Threshold mínimo ──
     if abs(score) < 2: return None
 
     direction = "LONG" if score > 0 else "SHORT"
     conf = "HIGH" if abs(score) >= 4 else "MEDIUM"
-    
-    size = round((capital / 10) * (1.0 if conf == "HIGH" else 0.7), 2)
-    if size < 15: size = 15 
+
+    # ── Kelly Criterion sizing ──
+    trades = (closed_trades or [])[-50:]
+    if len(trades) >= 10:
+        wins = [t for t in trades if (t.get("pnl") or 0) > 0]
+        losses = [t for t in trades if (t.get("pnl") or 0) < 0]
+        win_rate = len(wins) / len(trades)
+        avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 1
+        avg_loss = abs(sum(t["pnl"] for t in losses) / len(losses)) if losses else 1
+        b = avg_win / avg_loss if avg_loss > 0 else 1
+        kelly = max(0.05, min(0.25, win_rate - (1 - win_rate) / b))  # clamped 5%-25%
+        max_position = capital * kelly
+    else:
+        max_position = capital / 10  # fallback
+
+    size = round(max_position * (1.0 if conf == "HIGH" else 0.7), 2)
+    if size < 10: size = 10
+
+    strategy = "EMA_CROSS" if indicators["cross_bullish"] or indicators["cross_bearish"] else \
+               "MEAN_REVERSION" if rsi < 30 or rsi > 70 else \
+               "MOMENTUM" if indicators["macd_cross"] in ("bullish","bearish") and vol_ratio > 1.5 else "RANGE"
 
     return {
-        "strategy": "MOMENTUM" if indicators["vol_ratio"] > 1.4 else "RANGE",
-        "direction": direction, "confidence": conf, "reasoning": f"Score {score} | {', '.join(sigs[:1])}",
-        "stop_loss_pct": DEFAULT_SL_PCT, "take_profit_pct": DEFAULT_TP_PCT, "position_size_usdt": size
+        "strategy": strategy, "direction": direction, "confidence": conf,
+        "reasoning": f"Score {score:+d} | {' | '.join(sigs[:3])}",
+        "stop_loss_pct": DEFAULT_SL_PCT, "take_profit_pct": DEFAULT_TP_PCT,
+        "position_size_usdt": size
     }
 
-# ─── State Management ─────────────────────────────────────────────────────────
+# ─── State Management ────────────────────────────────────────────────────────
 
 def load_state() -> dict:
     default = {
-        "initial_capital": TOTAL_CAPITAL, "capital": TOTAL_CAPITAL, "positions": {}, 
-        "closed_trades": [], "total_pnl": 0.0, "cooldowns": {}, "cycle_log": [], 
+        "initial_capital": TOTAL_CAPITAL, "capital": TOTAL_CAPITAL, "positions": {},
+        "closed_trades": [], "total_pnl": 0.0, "cooldowns": {}, "cycle_log": [],
         "manual_close": [], "last_scan": [], "scanning": False
     }
     if STATE_FILE.exists():
         try:
             with open(STATE_FILE, "r") as f:
+                fcntl.flock(f, fcntl.LOCK_SH)
                 data = json.load(f)
+                fcntl.flock(f, fcntl.LOCK_UN)
             if not isinstance(data.get("positions"), dict): data["positions"] = {}
-            # Sincronización de seguridad con capital inicial del .env
             if not data.get("closed_trades"): data["capital"] = TOTAL_CAPITAL
             return data
-        except: return default
+        except:
+            return default
     return default
 
 def save_state(state: dict):
@@ -198,52 +289,65 @@ def save_state(state: dict):
         if isinstance(obj, dict): return {k: clean(v) for k, v in obj.items()}
         if isinstance(obj, list): return [clean(v) for v in obj]
         return obj
-    
+
     closed = state.get("closed_trades", [])
     state["total_pnl"] = round(sum(t.get("pnl", 0) for t in closed), 2)
-    # Capital Actualizado
     current_cap = round(TOTAL_CAPITAL + state["total_pnl"] - sum(p["size_usdt"] for p in state["positions"].values()), 2)
-    
+
     dashboard = {
         **state,
         "bot": "altcoins",
         "capital": current_cap,
         "current_capital": current_cap,
+        "initial_capital": TOTAL_CAPITAL,
+        "total_pnl": state["total_pnl"],
+        "total_pnl_raw": state["total_pnl"],
+        "total_pnl_pct": round(state["total_pnl"] / TOTAL_CAPITAL * 100, 2),
         "win_rate": round(len([t for t in closed if t.get("pnl",0) > 0]) / max(1, len(closed)) * 100, 1),
         "total_trades": len(closed),
+        "open_positions": list(state["positions"].values()),
         "all_closed_trades": closed,
         "closed_trades": closed[-30:],
         "last_updated": datetime.now().isoformat()
     }
-    
+
     try:
-        with open(STATE_FILE, "w") as f:
-            json.dump(clean(dashboard), f, indent=2)
-    except Exception as e: log.error(f"Error saving state: {e}")
+        tmp = STATE_FILE.parent / f".state_tmp_{os.getpid()}.json"
+        with open(tmp, "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            json.dump(clean(dashboard), f, indent=2, default=str)
+            fcntl.flock(f, fcntl.LOCK_UN)
+        os.replace(tmp, STATE_FILE)
+    except Exception as e:
+        log.error(f"Error saving state: {e}")
 
 def add_log(state, msg):
     state.setdefault("cycle_log", []).insert(0, {"time": datetime.now().strftime("%H:%M:%S"), "msg": msg})
     state["cycle_log"] = state["cycle_log"][:50]
 
-# ─── Trade Engine ─────────────────────────────────────────────────────────────
+# ─── Trade Engine ────────────────────────────────────────────────────────────
 
 def open_position(client, state, symbol, analysis, indicators):
     price, direction = indicators["price"], analysis["direction"]
-    sl = round(price * (1 - DEFAULT_SL_PCT) if direction == "LONG" else price * (1 + DEFAULT_SL_PCT), 8)
-    tp = round(price * (1 + DEFAULT_TP_PCT) if direction == "LONG" else price * (1 - DEFAULT_TP_PCT), 8)
-    
+    sl_pct = float(analysis.get("stop_loss_pct", DEFAULT_SL_PCT))
+    tp_pct = float(analysis.get("take_profit_pct", DEFAULT_TP_PCT))
+    sl = round(price * (1 - sl_pct) if direction == "LONG" else price * (1 + sl_pct), 8)
+    tp = round(price * (1 + tp_pct) if direction == "LONG" else price * (1 - tp_pct), 8)
+
     pos = {
         "symbol": symbol, "direction": direction, "strategy": analysis["strategy"],
         "entry_price": price, "entry_time": datetime.now().isoformat(),
         "size_usdt": analysis["position_size_usdt"], "stop_loss": sl, "take_profit": tp,
-        "tp_trailing_active": False, "tp_peak_price": price, "best_price": price, 
+        "tp_trailing_active": False, "tp_peak_price": price, "best_price": price,
         "leverage": LEVERAGE, "trailing_activated": False, "confidence": analysis["confidence"],
         "reasoning": analysis["reasoning"]
     }
 
     if DRY_RUN:
         state["positions"][symbol] = pos
-        add_log(state, f"✓ PAPER {direction} {symbol} @ ${price:.4f}")
+        msg = f"✓ PAPER {direction} {symbol} @ ${price:.4f} | {analysis['strategy']} | SL ${sl:.4f} | TP ${tp:.4f} | ${analysis['position_size_usdt']:.0f}"
+        add_log(state, msg)
+        log.info(f"  [PAPER] {msg}")
     else:
         try:
             client.futures_change_leverage(symbol=symbol, leverage=LEVERAGE)
@@ -251,43 +355,67 @@ def open_position(client, state, symbol, analysis, indicators):
             qty = round(pos["size_usdt"] * LEVERAGE / price, 3)
             client.futures_create_order(symbol=symbol, side=side, type="MARKET", quantity=qty)
             state["positions"][symbol] = pos
-            add_log(state, f"✅ REAL {direction} {symbol} @ ${price:.4f}")
-        except Exception as e: log.error(f"Error opening real {symbol}: {e}")
+            msg = f"✅ REAL {direction} {symbol} @ ${price:.4f} | ${analysis['position_size_usdt']:.0f}"
+            add_log(state, msg)
+            log.info(f"  [REAL] {msg}")
+        except Exception as e:
+            log.error(f"Error opening real {symbol}: {e}")
 
-def _close_position(state, symbol, pos, exit_price, exit_reason):
-    entry, direction, lev = pos["entry_price"], pos["direction"], pos["leverage"]
-    pnl_pct = ((exit_price - entry)/entry if direction=="LONG" else (entry-exit_price)/entry) * lev
+def _close_position(state, symbol, pos, exit_price, exit_reason, note=""):
+    entry, direction, lev = pos["entry_price"], pos["direction"], pos.get("leverage", LEVERAGE)
+    pnl_pct = ((exit_price - entry) / entry if direction == "LONG" else (entry - exit_price) / entry) * lev
     pnl = round(pos["size_usdt"] * pnl_pct, 2)
-    
-    trade = {**pos, "exit_price": exit_price, "exit_time": datetime.now().isoformat(), "pnl": pnl, "pnl_pct": round(pnl_pct*100, 2), "exit_reason": exit_reason}
-    state["closed_trades"].append(trade)
-    
-    if pnl < 0:
-        state["cooldowns"][symbol] = (datetime.now() + timedelta(minutes=LOSS_COOLDOWN_MIN)).isoformat()
 
-    if symbol in state["positions"]: del state["positions"][symbol]
-    
-    msg = f"{'✅' if pnl>0 else '❌'} {exit_reason} {symbol} | PnL ${pnl:+.2f} ({trade['pnl_pct']}%)"
-    add_log(state, msg); log.info(f"  [CLOSE] {msg}")
-    try: _log_trade({**trade, "bot": "altcoins"})
-    except: pass
+    trade = {
+        **pos, "exit_price": exit_price, "exit_time": datetime.now().isoformat(),
+        "pnl": pnl, "pnl_pct": round(pnl_pct * 100, 2), "exit_reason": exit_reason
+    }
+    state["closed_trades"].append(trade)
+
+    # Cooldown: emergency=15min, SL/early=10min, default=5min
+    if pnl < 0:
+        if exit_reason == "EMERGENCY":
+            cd_min = 15
+        elif exit_reason in ("STOP_LOSS", "EARLY_EXIT"):
+            cd_min = 10
+        else:
+            cd_min = 5
+        state.setdefault("cooldowns", {})[symbol] = (datetime.now() + timedelta(minutes=cd_min)).isoformat()
+
+    if symbol in state["positions"]:
+        del state["positions"][symbol]
+
+    emoji = "✅" if pnl > 0 else "❌"
+    msg = f"{emoji} {exit_reason} {symbol}{' '+note if note else ''} | exit ${exit_price:.6f} | P&L {'+' if pnl>=0 else ''}${pnl:.2f} ({pnl_pct*100:+.1f}%)"
+    add_log(state, msg)
+    log.info(f"  [CLOSE] {msg}")
+    try:
+        _log_trade({**trade, "bot": "altcoins", "symbol": symbol,
+                    "size": trade.get("size_usdt", 0), "leverage": lev})
+    except:
+        pass
 
 def check_positions(client, state, scenario=None):
     now = datetime.now()
     to_close = []
-    
+
     for symbol, pos in list(state["positions"].items()):
         try:
             ticker = client.futures_ticker(symbol=symbol)
             curr = float(ticker["lastPrice"])
-            entry, direction, sl, tp_act = pos["entry_price"], pos["direction"], pos["stop_loss"], pos["take_profit"]
-            lev = pos["leverage"]
+            entry_price = pos["entry_price"]
+            direction = pos["direction"]
+            sl = pos["stop_loss"]
+            tp_act = pos["take_profit"]
+            lev = pos.get("leverage", LEVERAGE)
 
-            # Trailing SL
-            if direction == "LONG": pos["best_price"] = max(pos.get("best_price", curr), curr)
-            else: pos["best_price"] = min(pos.get("best_price", curr), curr)
-            
-            move = abs(curr - entry) / entry
+            # ── 1. TRAILING STOP LOSS ──
+            if direction == "LONG":
+                pos["best_price"] = max(pos.get("best_price", curr), curr)
+            else:
+                pos["best_price"] = min(pos.get("best_price", curr), curr)
+
+            move = abs(curr - entry_price) / entry_price
             if move >= TRAILING_TRIGGER:
                 dist = 0.008 if move < TRAILING_TRIGGER*2 else 0.005 if move < TRAILING_TRIGGER*4 else 0.003
                 new_sl = round(pos["best_price"]*(1-dist) if direction=="LONG" else pos["best_price"]*(1+dist), 8)
@@ -295,86 +423,201 @@ def check_positions(client, state, scenario=None):
                     pos["stop_loss"] = sl = new_sl
                     pos["trailing_activated"] = True
 
-            # Trailing TP
-            if (direction=="LONG" and curr >= tp_act) or (direction=="SHORT" and curr <= tp_act):
-                if not pos.get("tp_trailing_active"):
-                    pos["tp_trailing_active"] = True
-                    pos["tp_peak_price"] = curr
+            # ── 2. TRAILING TAKE PROFIT (TTP) ──
+            hit_tp = (direction=="LONG" and curr >= tp_act) or (direction=="SHORT" and curr <= tp_act)
+            if hit_tp and not pos.get("tp_trailing_active"):
+                pos["tp_trailing_active"] = True
+                pos["tp_peak_price"] = curr
+                log.info(f"  🚀 TTP ACTIVADO en {symbol}: Precio alcanzó TP")
 
             if pos.get("tp_trailing_active"):
                 if direction == "LONG":
                     pos["tp_peak_price"] = max(pos["tp_peak_price"], curr)
+                    # TTP Peak Cap: máximo +15% sobre entry
+                    pos["tp_peak_price"] = min(pos["tp_peak_price"], entry_price * 1.15)
                     if curr <= pos["tp_peak_price"] * (1 - TP_CALLBACK_PCT):
-                        to_close.append((symbol, curr, "TRAILING_TP"))
+                        to_close.append((symbol, curr, "TRAILING_TP", f"Pico: ${pos['tp_peak_price']:.4f}"))
                         continue
                 else:
                     pos["tp_peak_price"] = min(pos["tp_peak_price"], curr)
+                    # TTP Peak Cap: máximo -15% bajo entry
+                    pos["tp_peak_price"] = max(pos["tp_peak_price"], entry_price * 0.85)
                     if curr >= pos["tp_peak_price"] * (1 + TP_CALLBACK_PCT):
-                        to_close.append((symbol, curr, "TRAILING_TP"))
+                        to_close.append((symbol, curr, "TRAILING_TP", f"Pico: ${pos['tp_peak_price']:.4f}"))
                         continue
 
-            # SL / Emergencia
-            pnl_pct = ((curr - entry)/entry if direction=="LONG" else (entry-curr)/entry) * lev
+            # ── 3. CONDICIONES DE CIERRE ──
+            unrealized_pct = ((curr - entry_price)/entry_price if direction=="LONG" else (entry_price-curr)/entry_price) * lev
             hit_sl = (direction=="LONG" and curr <= sl) or (direction=="SHORT" and curr >= sl)
-            time_exp = (now - datetime.fromisoformat(pos["entry_time"])).total_seconds()/60 >= TIME_LIMIT_MIN
-            
-            if hit_sl: to_close.append((symbol, curr, "STOP_LOSS"))
-            elif pnl_pct <= -0.25: to_close.append((symbol, curr, "EMERGENCY"))
-            elif time_exp: to_close.append((symbol, curr, "TIME_LIMIT"))
+            emergency = unrealized_pct < -0.10  # -10% (era -20%)
 
-        except Exception as e: log.error(f"Error check {symbol}: {e}")
+            entry_dt = datetime.fromisoformat(pos["entry_time"])
+            minutes_open = (now - entry_dt).total_seconds() / 60
+            time_expired = minutes_open >= TIME_LIMIT_MIN
+            early_exit = minutes_open >= 30 and unrealized_pct < -0.05  # 30min + perdiendo >5%
 
-    for s, p, r in to_close:
-        if s in state["positions"]: _close_position(state, s, state["positions"][s], p, r)
+            if hit_sl or emergency or time_expired or early_exit:
+                if emergency:
+                    exit_reason = "EMERGENCY"
+                elif early_exit:
+                    exit_reason = "EARLY_EXIT"
+                elif time_expired:
+                    exit_reason = "TIME_LIMIT"
+                else:
+                    exit_reason = "STOP_LOSS"
+                to_close.append((symbol, curr, exit_reason, ""))
+            else:
+                state["positions"][symbol] = pos  # guardar updates de best_price/peak
 
-# ─── Ciclo Principal ──────────────────────────────────────────────────────────
+        except Exception as e:
+            log.error(f"Error check {symbol}: {e}")
+
+    for s, p, r, note in to_close:
+        if s in state["positions"]:
+            _close_position(state, s, state["positions"][s], p, r, note)
+
+# ─── Ciclo Principal ─────────────────────────────────────────────────────────
 
 def run_cycle(client):
     log.info(f"\n{'='*40}\nALTCOIN CYCLE - {datetime.now().strftime('%H:%M:%S')}\n{'='*40}")
     state = load_state()
     now = datetime.now()
 
-    # Cooldown Cleanup
-    state["cooldowns"] = {s: t for s, t in state.get("cooldowns", {}).items() if datetime.fromisoformat(t) > now}
+    # Cooldown cleanup
+    state["cooldowns"] = {s: t for s, t in state.get("cooldowns", {}).items()
+                          if datetime.fromisoformat(t) > now}
 
     from drawdown_monitor import is_paused
-    if is_paused(STATE_FILE): return
+    if is_paused(STATE_FILE):
+        log.warning("⛔ BOT PAUSADO por drawdown")
+        return
 
+    # Manual closes
     for sym in list(state.get("manual_close", [])):
         if sym in state["positions"]:
-            t = client.futures_ticker(symbol=sym)
-            _close_position(state, sym, state["positions"][sym], float(t["lastPrice"]), "MANUAL")
+            try:
+                t = client.futures_ticker(symbol=sym)
+                _close_position(state, sym, state["positions"][sym], float(t["lastPrice"]), "MANUAL")
+            except Exception as e:
+                log.error(f"Error cerrando {sym}: {e}")
     state["manual_close"] = []
 
-    from market_scenario import detect_scenario
+    from market_scenario import detect_scenario, is_with_trend
     scenario = detect_scenario(client)
     check_positions(client, state, scenario)
 
+    capital = state.get("capital", TOTAL_CAPITAL)
     slots = MAX_POSITIONS - len(state["positions"])
-    if slots > 0:
-        state["scanning"] = True
-        state["last_scan"] = []
+
+    log.info(f"Capital: ${capital:.2f} | Posiciones: {len(state['positions'])}/{MAX_POSITIONS} | Cooldowns: {len(state['cooldowns'])}")
+    log.info(f"P&L total: ${state.get('total_pnl', 0):+.2f}")
+
+    if slots <= 0:
+        log.info("Máximo posiciones alcanzado. Esperando...")
         save_state(state)
-        
-        coins = get_top_altcoins(client)
-        # FILTRO ATÓMICO: Solo analiza si NO está abierta ni en cooldown
-        candidates = [c for c in coins if c["symbol"] not in state["positions"] and c["symbol"] not in state["cooldowns"]]
-        
-        opps = []
-        for c in candidates[:slots*3]:
-            inds = get_indicators(client, c["symbol"])
-            if not inds: continue
-            
-            open_l = sum(1 for p in state["positions"].values() if p["direction"]=="LONG")
-            open_s = sum(1 for p in state["positions"].values() if p["direction"]=="SHORT")
-            
-            ana = analyze_altcoin(inds, c, state["capital"], len(state["positions"]), open_l, open_s)
-            
-            if ana:
-                opps.append((inds, c, ana))
-                state["last_scan"].append({"symbol": c["symbol"], "strategy": ana["strategy"], "direction": ana["direction"], "confidence": ana["confidence"]})
-            time.sleep(0.2)
-        
-        opps.sort(key=lambda x: x[2]["position_size_usdt"], reverse=True)
-        for inds, coin, ana in opps[:slots]:
-            open_position(client, state, coin["symbol"], ana, i
+        return
+
+    # Scan
+    state["scanning"] = True
+    state["last_scan"] = []
+    save_state(state)
+
+    coins = get_top_altcoins(client)
+    # FILTRO: no abierta ni en cooldown
+    candidates = [c for c in coins if c["symbol"] not in state["positions"] and c["symbol"] not in state["cooldowns"]]
+
+    # Blacklist dinámica: symbols con <40% win rate después de 8+ trades
+    sym_stats = {}
+    for t in state.get("closed_trades", []):
+        s = t.get("symbol", "")
+        if not s: continue
+        st = sym_stats.setdefault(s, {"wins": 0, "total": 0})
+        st["total"] += 1
+        if t.get("pnl", 0) > 0: st["wins"] += 1
+    blacklist = {s for s, st in sym_stats.items() if st["total"] >= 8 and (st["wins"] / st["total"]) < 0.40}
+    if blacklist:
+        log.info(f"  🚫 Blacklist ({len(blacklist)}): {sorted(blacklist)}")
+    candidates = [c for c in candidates if c["symbol"] not in blacklist]
+
+    log.info(f"  Escenario: {scenario['name']} | bias={scenario['direction']}")
+    state["btc_macro"] = scenario["direction"]
+    log.info(f"\nAnalizando {min(len(candidates), slots*3)} candidatos...")
+
+    opps = []
+    for c in candidates[:slots*3]:
+        inds = get_indicators(client, c["symbol"])
+        if not inds: continue
+
+        open_l = sum(1 for p in state["positions"].values() if p["direction"]=="LONG")
+        open_s = sum(1 for p in state["positions"].values() if p["direction"]=="SHORT")
+
+        ana = analyze_altcoin(inds, c, capital, len(state["positions"]), open_l, open_s,
+                              closed_trades=state.get("closed_trades", []))
+        if ana:
+            # Filtro por escenario
+            allowed = scenario.get("alt_strategies", ["RANGE","MOMENTUM","MEAN_REVERSION"])
+            if ana["strategy"] not in allowed and ana["strategy"] not in ("EMA_CROSS",):
+                continue
+            if scenario.get("alt_block_counter") and not is_with_trend(ana["direction"], scenario):
+                continue
+
+            # Aplicar multiplicadores del escenario
+            ana["take_profit_pct"] = ana["take_profit_pct"] * scenario.get("alt_tp_mult", 1.0)
+            ana["position_size_usdt"] = ana["position_size_usdt"] * scenario.get("alt_size_mult", 1.0)
+
+            opps.append((inds, c, ana))
+            state["last_scan"].append({
+                "symbol": c["symbol"], "strategy": ana["strategy"],
+                "direction": ana["direction"], "confidence": ana["confidence"],
+                "scanned_at": datetime.now().strftime("%H:%M:%S")
+            })
+        time.sleep(0.2)
+
+    # Ejecutar mejores oportunidades
+    conf_order = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}
+    opps.sort(key=lambda x: conf_order.get(x[2]["confidence"], 0), reverse=True)
+
+    executed = 0
+    for inds, coin, ana in opps[:slots]:
+        symbol = coin["symbol"]
+        if capital < 20: break
+        # BF-3: Re-verificar que no se abrió ya en esta iteración
+        if symbol in state["positions"]:
+            continue
+        # Re-verificar cooldown (pudo haber cambiado durante el scan)
+        cd = state.get("cooldowns", {}).get(symbol)
+        if cd and datetime.fromisoformat(cd) > datetime.now():
+            continue
+        open_position(client, state, symbol, ana, inds)
+        capital = state.get("capital", capital)
+        executed += 1
+
+    state["scanning"] = False
+    save_state(state)
+
+    log.info(f"Ciclo completado: {executed} nuevas posiciones abiertas")
+
+    # Drawdown check
+    from drawdown_monitor import check_drawdown
+    check_drawdown("altcoins", state.get("capital", TOTAL_CAPITAL), TOTAL_CAPITAL,
+                   state.get("peak_capital", state.get("capital", TOTAL_CAPITAL)), STATE_FILE)
+
+
+def run_forever():
+    log.info("🤖 Multi-Altcoin Bot v4.0 — scoring técnico + Kelly sizing")
+    acquire_lock()
+    client = get_client()
+
+    while True:
+        try:
+            run_cycle(client)
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            log.error(f"Error en ciclo: {e}", exc_info=True)
+
+        time.sleep(INTERVAL_MINUTES * 60)
+
+
+if __name__ == "__main__":
+    run_forever()

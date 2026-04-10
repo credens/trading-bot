@@ -438,6 +438,32 @@ function AltcoinPanel({ data, liveprices, onClose }) {
               </div>
             ))
           }
+          {/* Cooldowns activos */}
+          {(() => {
+            const now = new Date();
+            const cds = Object.entries(data.cooldowns || {})
+              .filter(([, t]) => new Date(t) > now)
+              .sort((a, b) => new Date(a[1]) - new Date(b[1]));
+            if (!cds.length) return null;
+            return (
+              <div style={{ marginTop:12, borderTop:"1px solid rgba(255,255,255,0.05)", paddingTop:10 }}>
+                <div style={{ color:"#ffb800", fontSize:10, letterSpacing:1, marginBottom:6, textTransform:"uppercase" }}>
+                  Cooldowns ({cds.length})
+                </div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
+                  {cds.map(([sym, exp]) => {
+                    const mins = Math.max(0, Math.ceil((new Date(exp) - now) / 60000));
+                    return (
+                      <span key={sym} style={{ background:"rgba(255,184,0,0.08)", border:"1px solid #ffb80033",
+                        color:"#ffb800", borderRadius:6, padding:"2px 8px", fontSize:10, fontFamily:"monospace" }}>
+                        {sym.replace("USDT","")} {mins}m
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 

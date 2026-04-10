@@ -343,16 +343,18 @@ def analyze(ind: dict, current_position: str, scenario=None) -> dict:
         log.info(f"  [TREND ADX:{ind['adx']:.0f}] L:{long_score} S:{short_score} | EMA:{ind['ema_trend']} RSI:{rsi:.0f} CVD:{'↑' if ind['cvd_bullish'] else '↓'} Vol:{vol:.1f}x")
 
         if long_score >= 2 and long_score > short_score:
-            # CVD diverge fuerte: reducir tamaño pero no bloquear
+            # CVD diverge fuerte: BLOQUEAR trade
             if ind["cvd_divergence"] and not ind["cvd_bullish"]:
-                long_sigs.append("CVD diverge (tamaño reducido)")
+                log.info(f"  ⛔ LONG bloqueado por CVD divergencia")
+                return make("FLAT", "MEDIUM", "CVD diverge contra LONG", ["CVD bloqueó señal"])
             conf = "HIGH" if long_score >= 4 else "MEDIUM"
             return make("LONG", conf, f"TREND LONG score:{long_score} | {' | '.join(long_sigs[:3])}", long_sigs)
 
         if short_score >= 2 and short_score > long_score:
-            # CVD diverge fuerte: reducir tamaño pero no bloquear
+            # CVD diverge fuerte: BLOQUEAR trade
             if ind["cvd_divergence"] and not ind["cvd_bearish"]:
-                short_sigs.append("CVD diverge (tamaño reducido)")
+                log.info(f"  ⛔ SHORT bloqueado por CVD divergencia")
+                return make("FLAT", "MEDIUM", "CVD diverge contra SHORT", ["CVD bloqueó señal"])
             conf = "HIGH" if short_score >= 4 else "MEDIUM"
             return make("SHORT", conf, f"TREND SHORT score:{short_score} | {' | '.join(short_sigs[:3])}", short_sigs)
 
@@ -456,11 +458,11 @@ def update_trailing_stop(open_trade, price: float, atr: float = 0) -> Optional[f
 
     # ── Distancia dinámica basada en ATR + profit ────────────────
     if profit_pct < 0.005:
-        trail_dist = atr * 2.0       # amplio — zona breakeven
+        trail_dist = atr * 1.5       # zona breakeven (era 2.0)
     elif profit_pct < 0.010:
-        trail_dist = atr * 1.5       # moderado — lock profit
+        trail_dist = atr * 1.0       # lock profit (era 1.5)
     else:
-        trail_dist = atr * 1.0       # ajustado — trailing real
+        trail_dist = atr * 0.75      # trailing ajustado (era 1.0)
 
     # ── Calcular nuevo SL desde best_price ───────────────────────
     if side == "LONG":

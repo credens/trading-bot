@@ -68,11 +68,11 @@ def detect_scenario(client, symbol="BTCUSDT"):
         minus_dm = (-low.diff()).clip(lower=0)
         plus_dm[plus_dm < minus_dm] = 0
         minus_dm[minus_dm < plus_dm] = 0
-        atr14 = tr.ewm(span=14, adjust=False).mean()
-        plus_di = 100 * plus_dm.ewm(span=14, adjust=False).mean() / atr14.replace(0, np.nan)
-        minus_di = 100 * minus_dm.ewm(span=14, adjust=False).mean() / atr14.replace(0, np.nan)
+        atr14 = tr.rolling(14).mean()
+        plus_di = 100 * plus_dm.rolling(14).mean() / atr14.replace(0, np.nan)
+        minus_di = 100 * minus_dm.rolling(14).mean() / atr14.replace(0, np.nan)
         dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
-        adx = float(dx.ewm(span=14, adjust=False).mean().iloc[-1])
+        adx = float(dx.rolling(14).mean().iloc[-1])
 
         gap_abs = abs(macro_gap)
 
