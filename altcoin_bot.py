@@ -21,7 +21,14 @@ import time
 import fcntl
 import atexit
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+
+def _parse_dt(s):
+    """Parse ISO datetime string, handling trailing 'Z' for Python 3.10."""
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    return _parse_dt(s)
 from trade_logger import log_trade as _log_trade
 from pathlib import Path
 from typing import Optional
@@ -451,7 +458,7 @@ def check_positions(client, state, scenario=None):
             hit_sl = (direction=="LONG" and curr <= sl) or (direction=="SHORT" and curr >= sl)
             emergency = unrealized_pct < -0.10  # -10% (era -20%)
 
-            entry_dt = datetime.fromisoformat(pos["entry_time"])
+            entry_dt = _parse_dt(pos["entry_time"])
             minutes_open = (now - entry_dt).total_seconds() / 60
             time_expired = minutes_open >= TIME_LIMIT_MIN
             early_exit = minutes_open >= 30 and unrealized_pct < -0.05  # 30min + perdiendo >5%
@@ -485,7 +492,7 @@ def run_cycle(client):
 
     # Cooldown cleanup
     state["cooldowns"] = {s: t for s, t in state.get("cooldowns", {}).items()
-                          if datetime.fromisoformat(t) > now}
+                          if _parse_dt(t) > now}
 
     from drawdown_monitor import is_paused
     if is_paused(STATE_FILE):
@@ -586,7 +593,7 @@ def run_cycle(client):
             continue
         # Re-verificar cooldown (pudo haber cambiado durante el scan)
         cd = state.get("cooldowns", {}).get(symbol)
-        if cd and datetime.fromisoformat(cd) > datetime.now():
+        if cd and _parse_dt(cd) > datetime.now():
             continue
         open_position(client, state, symbol, ana, inds)
         capital = state.get("capital", capital)
