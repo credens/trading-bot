@@ -90,6 +90,7 @@ def cmd_help(chat_id, args):
 /positions — Posiciones abiertas
 /pnl — P&amp;L hoy y total
 /report — Reporte diario ahora
+/weekly — Análisis semanal
 /pause [bot] — Pausar (scalping/altcoin/all)
 /resume [bot] — Reanudar
 /closeall — Cerrar todo (requiere confirm)
@@ -222,6 +223,16 @@ def cmd_report(chat_id, args):
         send_reply(chat_id, f"❌ Error: {e}")
 
 
+def cmd_weekly(chat_id, args):
+    send_reply(chat_id, "⏳ Generando análisis semanal...")
+    try:
+        from daily_report import generate_weekly_analysis
+        generate_weekly_analysis()
+        send_reply(chat_id, "✅ Análisis semanal enviado.")
+    except Exception as e:
+        send_reply(chat_id, f"❌ Error: {e}")
+
+
 def cmd_pause(chat_id, args):
     target = args[0].lower() if args else "all"
     targets = list(BOTS.keys()) if target == "all" else [target]
@@ -324,6 +335,7 @@ COMMANDS = {
     "/pos": cmd_positions,
     "/pnl": cmd_pnl,
     "/report": cmd_report,
+    "/weekly": cmd_weekly,
     "/pause": cmd_pause,
     "/resume": cmd_resume,
     "/closeall": cmd_closeall,
