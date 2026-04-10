@@ -28,7 +28,7 @@ def _parse_dt(s):
     """Parse ISO datetime string, handling trailing 'Z' for Python 3.10."""
     if s.endswith("Z"):
         s = s[:-1] + "+00:00"
-    return _parse_dt(s)
+    return datetime.fromisoformat(s)
 from trade_logger import log_trade as _log_trade
 from pathlib import Path
 from typing import Optional
