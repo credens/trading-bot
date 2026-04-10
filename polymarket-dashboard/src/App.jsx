@@ -387,7 +387,7 @@ function AltcoinPanel({ data, liveprices, onClose }) {
               <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.06)", borderRadius:10, padding:"12px 16px" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
                   <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                    <span style={{ color:"#ff64c8", fontWeight:700, fontFamily:"monospace" }}>{p.symbol}</span>
+                    <a href={`https://www.binance.com/en/futures/${p.symbol}`} target="_blank" rel="noopener noreferrer" style={{ color:"#ff64c8", fontWeight:700, fontFamily:"monospace", textDecoration:"none" }}>{p.symbol}</a>
                     <Badge text={p.direction||p.side} color={(p.direction||p.side)==="LONG"?"#00ff88":"#ff4444"} />
                     <Badge text={p.strategy} color={stratColor(p.strategy)} />
                     <Badge text={p.confidence} color={p.confidence==="HIGH"?"#00ff88":"#ffcc00"} />
@@ -485,7 +485,7 @@ function AltcoinPanel({ data, liveprices, onClose }) {
               <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"10px 14px" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
                   <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                    <span style={{ color:"#ff64c8", fontFamily:"monospace", minWidth:80 }}>{t.symbol}</span>
+                    <a href={`https://www.binance.com/en/futures/${t.symbol}`} target="_blank" rel="noopener noreferrer" style={{ color:"#ff64c8", fontFamily:"monospace", minWidth:80, textDecoration:"none" }}>{t.symbol}</a>
                     <Badge text={t.direction||t.side} color={(t.direction||t.side)==="LONG"?"#00ff88":"#ff4444"} />
                     <Badge text={t.strategy} color={stratColor(t.strategy)} />
                     <Badge text={t.exit_reason||"CLOSE"} color={t.exit_reason==="TAKE_PROFIT"?"#00ff88":t.exit_reason==="STOP_LOSS"?"#ff4444":"#bbb"} />
