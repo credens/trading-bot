@@ -52,7 +52,8 @@ CYCLE_SECONDS  = int(os.getenv("SCALP_CYCLE_SECONDS", "30"))
 SL_PCT         = 0.004   # 0.4% mínimo
 TP_PCT         = 0.008   # 0.8% mínimo
 POS_PCT        = 0.15    # 15% del capital por trade
-MIN_HOLD_SECS  = 90      # 90s mínimo antes de cerrar por SIGNAL
+MIN_HOLD_SECS  = 300     # 5 min mínimo antes de cerrar por SIGNAL
+SIGNAL_COOLDOWN_SECS = 180  # 3 min cooldown después de cerrar por SIGNAL
 
 BINANCE_API_KEY    = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
@@ -565,11 +566,20 @@ def run_cycle(client, paper):
         if open_trade:
             min_hold_sec = scenario.get("sc_min_hold_sec", MIN_HOLD_SECS)
             held_secs = (datetime.now() - datetime.fromisoformat(open_trade.entry_time[:19])).total_seconds()
+            # Check if trade is in profit
+            if open_trade.side == "LONG":
+                in_profit = price > open_trade.entry_price
+            else:
+                in_profit = price < open_trade.entry_price
             if held_secs < min_hold_sec:
                 remaining = int(min_hold_sec - held_secs)
                 paper.add_log(f"HOLD forzado — min hold {remaining}s ({scenario['name']})")
+            elif in_profit:
+                # En profit → NO cerrar por SIGNAL, dejar que trailing stop haga su trabajo
+                paper.add_log(f"HOLD — en profit, trailing stop decide salida")
             else:
                 paper.close_scalping_position(price, "SIGNAL")
+                paper.state.last_signal_exit = datetime.now().isoformat()
         else:
             paper.add_log(f"FLAT — {decision['reasoning'][:60]}")
 
@@ -626,8 +636,22 @@ def run_cycle(client, paper):
                 paper.save()
                 return
 
+            # Cooldown post-SIGNAL: no abrir nuevo trade por 3 min
+            last_sig = getattr(paper.state, 'last_signal_exit', None)
+            if last_sig:
+                try:
+                    elapsed = (datetime.now() - datetime.fromisoformat(last_sig[:19])).total_seconds()
+                    if elapsed < SIGNAL_COOLDOWN_SECS:
+                        remaining = int(SIGNAL_COOLDOWN_SECS - elapsed)
+                        paper.add_log(f"Cooldown post-SIGNAL — {remaining}s restantes")
+                        paper.save()
+                        return
+                except Exception:
+                    pass
+
             if open_trade and open_trade.side != action:
                 paper.close_scalping_position(price, "SIGNAL")
+                paper.state.last_signal_exit = datetime.now().isoformat()
             if not paper.get_scalping_position():
                 paper.open_scalping_trade(decision, price, capital, LEVERAGE)
 
