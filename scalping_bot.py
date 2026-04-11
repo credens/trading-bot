@@ -254,10 +254,11 @@ def analyze(ind: dict, current_position: str, scenario=None) -> dict:
     vol     = ind["vol_ratio"]
     macd_h  = ind["macd_hist"]
 
-    # SL dinámico basado en ATR (mín 0.4%, máx 0.6%)
-    sl_pct = round(max(min(atr_pct * 1.2 / 100, 0.006), SL_PCT), 5)
+    # SL/TP dinámicos basados en ATR
+    atr_dec = atr_pct / 100  # convertir a decimal
+    sl_pct = round(max(min(atr_dec * 1.5, 0.015), SL_PCT), 5)   # 1.5x ATR, clamp 0.4%-1.5%
     tp_mult = scenario.get("sc_tp_mult", 1.0) if scenario else 1.0
-    tp_pct = round(sl_pct * 3.0 * tp_mult, 5)
+    tp_pct = round(sl_pct * 2.5 * tp_mult, 5)                    # R:R 2.5:1
 
     def make(decision, confidence, reasoning, signals):
         # Size dinámico según escenario y dirección
@@ -645,7 +646,7 @@ def run_cycle(client, paper):
 def run_forever():
     log.info("🔪 Scalping Bot v2 — BTC 1m — CVD + ADX Regime + Trailing Stop")
     log.info(f"   Modo: {'DRY RUN' if DRY_RUN else '⚠️  REAL'} | Leverage: {LEVERAGE}x | Ciclo: {CYCLE_SECONDS}s")
-    log.info(f"   SL: {SL_PCT*100:.1f}%+ (ATR) | TP: SL×2.8 | Capital: ${SCALP_CAPITAL}")
+    log.info(f"   SL: 1.5×ATR (0.4%-1.5%) | TP: SL×2.5 | Capital: ${SCALP_CAPITAL}")
 
     client = get_client()
     paper  = get_scalping_engine(initial_capital=SCALP_CAPITAL)
