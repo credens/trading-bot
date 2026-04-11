@@ -50,10 +50,10 @@ INTERVAL_MINUTES = int(os.getenv("ALTCOIN_INTERVAL",   "3"))
 MIN_VOLUME_USDT  = float(os.getenv("ALTCOIN_MIN_VOLUME","300000000"))
 TOP_N            = int(os.getenv("ALTCOIN_TOP_N",       "20"))
 CANDLE_INTERVAL  = os.getenv("ALTCOIN_CANDLE", "5m")
-DEFAULT_SL_PCT   = float(os.getenv("ALTCOIN_SL",  "0.006"))     # SL 0.6%
-DEFAULT_TP_PCT   = float(os.getenv("ALTCOIN_TP",  "0.025"))     # TP 2.5% (activa TTP)
-TRAILING_TRIGGER = float(os.getenv("ALTCOIN_TRAIL", "0.004"))   # mover SL a BE cuando +0.4%
-TP_CALLBACK_PCT  = float(os.getenv("ALTCOIN_TP_CALLBACK", "0.003"))  # retroceso 0.3% para cerrar TTP
+DEFAULT_SL_PCT   = float(os.getenv("ALTCOIN_SL",  "0.006"))     # SL fallback 0.6%
+DEFAULT_TP_PCT   = float(os.getenv("ALTCOIN_TP",  "0.025"))     # TP fallback 2.5%
+TRAILING_TRIGGER = float(os.getenv("ALTCOIN_TRAIL", "0.004"))   # trailing trigger fallback
+TP_CALLBACK_PCT  = float(os.getenv("ALTCOIN_TP_CALLBACK", "0.003"))  # TTP callback fallback
 TIME_LIMIT_MIN   = int(os.getenv("ALTCOIN_TIME_LIMIT", "60"))   # cerrar si stale > 60min
 
 BINANCE_API_KEY = os.getenv("BINANCE_API_KEY")
@@ -262,10 +262,24 @@ def analyze_altcoin(indicators, market_data, capital, open_pos, open_l, open_s, 
                "MEAN_REVERSION" if rsi < 30 or rsi > 70 else \
                "MOMENTUM" if indicators["macd_cross"] in ("bullish","bearish") and vol_ratio > 1.5 else "RANGE"
 
+    # ── TP/SL dinámicos basados en ATR ──
+    atr_pct = indicators.get("atr_pct", 0) / 100  # viene en %, convertir a decimal
+    if atr_pct > 0.003:  # solo si ATR es razonable (>0.3%)
+        tp_pct = round(min(max(atr_pct * 3.0, 0.02), 0.12), 4)   # 3x ATR, clamp 2%-12%
+        sl_pct = round(min(max(atr_pct * 1.2, 0.005), 0.04), 4)  # 1.2x ATR, clamp 0.5%-4%
+        trail_trigger = round(atr_pct * 0.6, 4)                    # 0.6x ATR
+        tp_callback = round(min(max(atr_pct * 0.4, 0.002), 0.015), 4)  # 0.4x ATR, clamp 0.2%-1.5%
+    else:
+        tp_pct = DEFAULT_TP_PCT
+        sl_pct = DEFAULT_SL_PCT
+        trail_trigger = TRAILING_TRIGGER
+        tp_callback = TP_CALLBACK_PCT
+
     return {
         "strategy": strategy, "direction": direction, "confidence": conf,
         "reasoning": f"Score {score:+d} | {' | '.join(sigs[:3])}",
-        "stop_loss_pct": DEFAULT_SL_PCT, "take_profit_pct": DEFAULT_TP_PCT,
+        "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
+        "trailing_trigger": trail_trigger, "tp_callback": tp_callback,
         "position_size_usdt": size
     }
 
@@ -347,12 +361,14 @@ def open_position(client, state, symbol, analysis, indicators):
         "size_usdt": analysis["position_size_usdt"], "stop_loss": sl, "take_profit": tp,
         "tp_trailing_active": False, "tp_peak_price": price, "best_price": price,
         "leverage": LEVERAGE, "trailing_activated": False, "confidence": analysis["confidence"],
-        "reasoning": analysis["reasoning"]
+        "reasoning": analysis["reasoning"],
+        "trailing_trigger": analysis.get("trailing_trigger", TRAILING_TRIGGER),
+        "tp_callback": analysis.get("tp_callback", TP_CALLBACK_PCT)
     }
 
     if DRY_RUN:
         state["positions"][symbol] = pos
-        msg = f"✓ PAPER {direction} {symbol} @ ${price:.4f} | {analysis['strategy']} | SL ${sl:.4f} | TP ${tp:.4f} | ${analysis['position_size_usdt']:.0f}"
+        msg = f"✓ PAPER {direction} {symbol} @ ${price:.4f} | {analysis['strategy']} | SL {sl_pct*100:.1f}% | TP {tp_pct*100:.1f}% | ${analysis['position_size_usdt']:.0f}"
         add_log(state, msg)
         log.info(f"  [PAPER] {msg}")
     else:
@@ -422,9 +438,10 @@ def check_positions(client, state, scenario=None):
             else:
                 pos["best_price"] = min(pos.get("best_price", curr), curr)
 
+            pos_trail_trigger = pos.get("trailing_trigger", TRAILING_TRIGGER)
             move = abs(curr - entry_price) / entry_price
-            if move >= TRAILING_TRIGGER:
-                dist = 0.008 if move < TRAILING_TRIGGER*2 else 0.005 if move < TRAILING_TRIGGER*4 else 0.003
+            if move >= pos_trail_trigger:
+                dist = 0.008 if move < pos_trail_trigger*2 else 0.005 if move < pos_trail_trigger*4 else 0.003
                 new_sl = round(pos["best_price"]*(1-dist) if direction=="LONG" else pos["best_price"]*(1+dist), 8)
                 if (direction=="LONG" and new_sl > sl) or (direction=="SHORT" and new_sl < sl):
                     pos["stop_loss"] = sl = new_sl
@@ -437,19 +454,20 @@ def check_positions(client, state, scenario=None):
                 pos["tp_peak_price"] = curr
                 log.info(f"  🚀 TTP ACTIVADO en {symbol}: Precio alcanzó TP")
 
+            pos_tp_callback = pos.get("tp_callback", TP_CALLBACK_PCT)
             if pos.get("tp_trailing_active"):
                 if direction == "LONG":
                     pos["tp_peak_price"] = max(pos["tp_peak_price"], curr)
                     # TTP Peak Cap: máximo +15% sobre entry
                     pos["tp_peak_price"] = min(pos["tp_peak_price"], entry_price * 1.15)
-                    if curr <= pos["tp_peak_price"] * (1 - TP_CALLBACK_PCT):
+                    if curr <= pos["tp_peak_price"] * (1 - pos_tp_callback):
                         to_close.append((symbol, curr, "TRAILING_TP", f"Pico: ${pos['tp_peak_price']:.4f}"))
                         continue
                 else:
                     pos["tp_peak_price"] = min(pos["tp_peak_price"], curr)
                     # TTP Peak Cap: máximo -15% bajo entry
                     pos["tp_peak_price"] = max(pos["tp_peak_price"], entry_price * 0.85)
-                    if curr >= pos["tp_peak_price"] * (1 + TP_CALLBACK_PCT):
+                    if curr >= pos["tp_peak_price"] * (1 + pos_tp_callback):
                         to_close.append((symbol, curr, "TRAILING_TP", f"Pico: ${pos['tp_peak_price']:.4f}"))
                         continue
 
