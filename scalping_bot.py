@@ -221,6 +221,7 @@ def calc_indicators(df: pd.DataFrame) -> dict:
         "bb_mid":         round(bb_mid, 2),
         "bb_upper":       round(float(bb_upper.iloc[-1]), 2),
         "bb_lower":       round(float(bb_lower.iloc[-1]), 2),
+        "adx_prev":       round(adx, 1),  # MEJORA 4: Track ADX anterior para detectar aceleración
     }
 
 
@@ -484,6 +485,16 @@ def update_trailing_stop(open_trade, price: float, atr: float = 0) -> Optional[f
 def run_cycle(client, paper):
     log.info(f"── CICLO {datetime.now().strftime('%H:%M:%S')} ──────────────────────────")
 
+    # 0. MEJORA 5: Hour Filter — no operar fuera de peak liquidity
+    now = datetime.now(timezone.utc)
+    PEAK_HOURS_UTC = list(range(9, 21))  # 09:00-21:00 UTC (peak liquidity)
+    if now.hour not in PEAK_HOURS_UTC:
+        remaining = min(PEAK_HOURS_UTC) - now.hour if now.hour < 9 else (24 - now.hour) + min(PEAK_HOURS_UTC)
+        log.warning(f"  ⏸ Fuera de peak hours ({now.hour:02d}:00 UTC) — siguientes {remaining}h")
+        paper.add_log(f"⏸ Peak hours (09:00-21:00 UTC), esperando")
+        paper.save()
+        return
+
     # 0a. Verificar pausa por drawdown
     from drawdown_monitor import is_paused
     if is_paused(SCALPING_STATE):
@@ -513,6 +524,7 @@ def run_cycle(client, paper):
 
     # 2. Verificar stops con precio REAL (no con 0)
     paper.check_scalping_stops(price)
+    paper.update_breakeven_stop(price)  # MEJORA 1: Breakeven Stop
     open_trade = paper.get_scalping_position()
     capital    = paper.state.current_capital + sum(t.size for t in paper.state.open_trades if t.bot == "scalping")
     current_pos = open_trade.side if open_trade else "FLAT"
@@ -578,8 +590,27 @@ def run_cycle(client, paper):
                 # En profit → NO cerrar por SIGNAL, dejar que trailing stop haga su trabajo
                 paper.add_log(f"HOLD — en profit, trailing stop decide salida")
             else:
-                paper.close_scalping_position(price, "SIGNAL")
-                paper.state.last_signal_exit = datetime.now().isoformat()
+                # FIX 3: Requrir confluencia para SIGNAL exit
+                # EMA cross + MACD + CVD deben estar TODOS contra posición
+                should_close = False
+                if open_trade.side == "LONG":
+                    # Para cerrar LONG: bearish total
+                    if ind["ema_trend"] == "bearish" and ind["macd_hist"] < 0 and ind["cvd_slope"] < 0:
+                        should_close = True
+                else:
+                    # Para cerrar SHORT: bullish total
+                    if ind["ema_trend"] == "bullish" and ind["macd_hist"] > 0 and ind["cvd_slope"] > 0:
+                        should_close = True
+                
+                if should_close:
+                    paper.close_scalping_position(price, "SIGNAL")
+                    paper.state.last_signal_exit = datetime.now().isoformat()
+                    # FIX 4: Cooldown 3 min post-SIGNAL para evitar re-entry inmediato
+                    raw = _json.loads(SCALPING_STATE.read_text()) if SCALPING_STATE.exists() else {}
+                    raw["cooldown_until"] = (datetime.now() + timedelta(minutes=3)).isoformat()
+                    SCALPING_STATE.write_text(_json.dumps(raw, indent=2))
+                else:
+                    paper.add_log(f"SIGNAL parcial, no cierro (confluencia insuficiente)")
         else:
             paper.add_log(f"FLAT — {decision['reasoning'][:60]}")
 

@@ -238,6 +238,8 @@ def analyze_altcoin(indicators, market_data, capital, open_pos, open_l, open_s, 
     # ── Threshold mínimo ──
     if abs(score) < 2: return None
 
+    # FIX 5: Respetar bias del escenario - no abrir contra tendencia
+    # Para bots multi-asset, simulamos bias bearish como scaler negativo
     direction = "LONG" if score > 0 else "SHORT"
     conf = "HIGH" if abs(score) >= 4 else "MEDIUM"
 
@@ -395,10 +397,15 @@ def _close_position(state, symbol, pos, exit_price, exit_reason, note=""):
     }
     state["closed_trades"].append(trade)
 
-    # Cooldown: emergency=15min, SL/early=10min, default=5min
+    # FIX 6: Cooldown mejorado - EMERGENCY: blacklist temporal 30min o 2h si 2+ emergencies
     if pnl < 0:
         if exit_reason == "EMERGENCY":
-            cd_min = 15
+            # Contar EMERGENCY exits recientes para este symbol
+            recent_trades = [t for t in state["closed_trades"][-30:] if t.get("symbol") == symbol and t.get("exit_reason") == "EMERGENCY"]
+            if len(recent_trades) >= 2:
+                cd_min = 120  # 2 horas si tiene 2+ EMERGENCY
+            else:
+                cd_min = 30   # 30 min por EMERGENCY
         elif exit_reason in ("STOP_LOSS", "EARLY_EXIT"):
             cd_min = 10
         else:
@@ -471,10 +478,28 @@ def check_positions(client, state, scenario=None):
                         to_close.append((symbol, curr, "TRAILING_TP", f"Pico: ${pos['tp_peak_price']:.4f}"))
                         continue
 
+            # ── 2b. MEJORA 2: Profit Locking ──
+            # Si estamos muy en ganancia, reducir TP para asegurar ganancias
+            unrealized_pct_for_lock = ((curr - entry_price)/entry_price if direction=="LONG" else (entry_price-curr)/entry_price) * lev
+            if unrealized_pct_for_lock >= 0.20:  # 20% de ganancia
+                tp = round(entry_price * (1.05 if direction == "LONG" else 0.95), 8)
+                if direction == "LONG" and tp < tp_act:
+                    pos["take_profit"] = tp
+                    log.info(f"  💰 Profit Lock {symbol}: TP bajado a +5% (ganancia asegurada)")
+                elif direction == "SHORT" and tp > tp_act:
+                    pos["take_profit"] = tp
+                    log.info(f"  💰 Profit Lock {symbol}: TP bajado a +5%")
+            elif unrealized_pct_for_lock >= 0.10:  # 10% de ganancia
+                tp = round(entry_price * (1.03 if direction == "LONG" else 0.97), 8)
+                if direction == "LONG" and tp < tp_act:
+                    pos["take_profit"] = tp
+                elif direction == "SHORT" and tp > tp_act:
+                    pos["take_profit"] = tp
+
             # ── 3. CONDICIONES DE CIERRE ──
             unrealized_pct = ((curr - entry_price)/entry_price if direction=="LONG" else (entry_price-curr)/entry_price) * lev
             hit_sl = (direction=="LONG" and curr <= sl) or (direction=="SHORT" and curr >= sl)
-            emergency = unrealized_pct < -0.10  # -10% (era -20%)
+            emergency = unrealized_pct < -0.07  # FIX 7: -7% (era -10%, antes -20%)
 
             entry_dt = _parse_dt(pos["entry_time"])
             minutes_open = (now - entry_dt).total_seconds() / 60
@@ -505,6 +530,15 @@ def check_positions(client, state, scenario=None):
 
 def run_cycle(client):
     log.info(f"\n{'='*40}\nALTCOIN CYCLE - {datetime.now().strftime('%H:%M:%S')}\n{'='*40}")
+    
+    # MEJORA 5: Hour Filter — no operar fuera de peak liquidity
+    now_utc = datetime.now(timezone.utc)
+    PEAK_HOURS_UTC = list(range(9, 21))  # 09:00-21:00 UTC
+    if now_utc.hour not in PEAK_HOURS_UTC:
+        remaining = min(PEAK_HOURS_UTC) - now_utc.hour if now_utc.hour < 9 else (24 - now_utc.hour) + min(PEAK_HOURS_UTC)
+        log.warning(f"  ⏸ Baja liquidez ({now_utc.hour:02d}:00 UTC) — pausa {remaining}h")
+        return
+    
     state = load_state()
     now = datetime.now()
 
@@ -583,6 +617,14 @@ def run_cycle(client):
             allowed = scenario.get("alt_strategies", ["RANGE","MOMENTUM","MEAN_REVERSION"])
             if ana["strategy"] not in allowed and ana["strategy"] not in ("EMA_CROSS",):
                 continue
+            
+            # FIX 5: Respetar bias del escenario - bloquear SHORTs en bullish, LONGs en bearish (excepto en RANGE)
+            scenario_name = scenario.get("name", "RANGE")
+            if scenario_name in ("TREND_STRONG", "TREND_MODERATE"):
+                if not is_with_trend(ana["direction"], scenario):
+                    log.info(f"    ⛔ {c['symbol']} {ana['direction']} bloqueado: contra tendencia en {scenario_name}")
+                    continue
+            
             if scenario.get("alt_block_counter") and not is_with_trend(ana["direction"], scenario):
                 continue
 

@@ -249,6 +249,49 @@ def _check_scalping_stops(self, current_price: float):
     if closed:
         self.save()
 
+def _update_breakeven_stop(self, current_price: float):
+    """MEJORA 1: Mueve SL a breakeven cuando el trade gana +0.5%"""
+    for trade in self.state.open_trades:
+        if trade.bot != "scalping":
+            continue
+        if trade.side == "LONG":
+            current_profit = (current_price - trade.entry_price) / trade.entry_price
+        else:
+            current_profit = (trade.entry_price - current_price) / trade.entry_price
+        
+        # Si estamos en profit >= 0.5% y no hemos activado breakeven
+        if current_profit >= 0.005 and not getattr(trade, 'breakeven_activated', False):
+            breakeven_price = trade.entry_price + (0.001 if trade.side == "LONG" else -0.001)
+            trade.stop_loss = breakeven_price
+            trade.breakeven_activated = True
+            emoji = "🛡️" if trade.side == "LONG" else "🛡️"
+            log.info(f"  {emoji} Breakeven Stop activado {trade.id}: SL -> {breakeven_price:.0f}")
+            self.save()
+
+def _apply_profit_locking(self, current_price: float):
+    """MEJORA 2: Reduce TP cuando el trade está muy en ganancia (>10%-20%)"""
+    for trade in self.state.open_trades:
+        if trade.bot != "scalping":  # Solo para altcoins en state dict
+            continue
+        if trade.side == "LONG":
+            current_pnl = (current_price - trade.entry_price) / trade.entry_price
+        else:
+            current_pnl = (trade.entry_price - current_price) / trade.entry_price
+        
+        # Si ganancia > 20%, bajar TP a +5%
+        if current_pnl >= 0.20:
+            if trade.side == "LONG":
+                trade.take_profit = min(trade.take_profit, trade.entry_price * 1.05)
+            else:
+                trade.take_profit = max(trade.take_profit, trade.entry_price * 0.95)
+        # Si ganancia > 10%, bajar TP a +3%
+        elif current_pnl >= 0.10:
+            if trade.side == "LONG":
+                trade.take_profit = min(trade.take_profit, trade.entry_price * 1.03)
+            else:
+                trade.take_profit = max(trade.take_profit, trade.entry_price * 0.97)
+        self.save()
+
 def _get_scalping_position(self):
     for t in self.state.open_trades:
         if t.bot == "scalping":
@@ -264,5 +307,7 @@ def _close_scalping_position(self, current_price: float, reason: str = "SIGNAL")
 
 PaperTradingEngine.open_scalping_trade   = _open_scalping_trade
 PaperTradingEngine.check_scalping_stops  = _check_scalping_stops
+PaperTradingEngine.update_breakeven_stop = _update_breakeven_stop
+PaperTradingEngine.apply_profit_locking  = _apply_profit_locking
 PaperTradingEngine.get_scalping_position = _get_scalping_position
 PaperTradingEngine.close_scalping_position = _close_scalping_position
