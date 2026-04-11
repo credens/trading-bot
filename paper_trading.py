@@ -58,6 +58,7 @@ class BotState:
     peak_capital: float = 0.0
     trades_today: int = 0
     last_updated: str = ""
+    next_liquidity_check: Optional[str] = None
     cycle_log: list = field(default_factory=list)
     # Binance extra
     btc_price: float = 0.0

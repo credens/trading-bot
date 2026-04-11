@@ -291,7 +291,8 @@ def load_state() -> dict:
     default = {
         "initial_capital": TOTAL_CAPITAL, "capital": TOTAL_CAPITAL, "positions": {},
         "closed_trades": [], "total_pnl": 0.0, "cooldowns": {}, "cycle_log": [],
-        "manual_close": [], "last_scan": [], "scanning": False
+        "manual_close": [], "last_scan": [], "scanning": False,
+        "next_liquidity_check": None
     }
     if STATE_FILE.exists():
         try:
@@ -531,15 +532,35 @@ def check_positions(client, state, scenario=None):
 def run_cycle(client):
     log.info(f"\n{'='*40}\nALTCOIN CYCLE - {datetime.now().strftime('%H:%M:%S')}\n{'='*40}")
     
-    # MEJORA 5: Hour Filter — no operar fuera de peak liquidity
+    state = load_state()
     now_utc = datetime.now(timezone.utc)
     PEAK_HOURS_UTC = list(range(9, 21))  # 09:00-21:00 UTC
+
+    next_check = None
+    if state.get("next_liquidity_check"):
+        try:
+            next_check = datetime.fromisoformat(state["next_liquidity_check"])
+        except Exception:
+            next_check = None
+
     if now_utc.hour not in PEAK_HOURS_UTC:
-        remaining = min(PEAK_HOURS_UTC) - now_utc.hour if now_utc.hour < 9 else (24 - now_utc.hour) + min(PEAK_HOURS_UTC)
-        log.warning(f"  ⏸ Baja liquidez ({now_utc.hour:02d}:00 UTC) — pausa {remaining}h")
+        if next_check and now_utc < next_check:
+            remaining = int((next_check - now_utc).total_seconds() / 60)
+            log.warning(f"  ⏸ Baja liquidez ({now_utc.hour:02d}:00 UTC) — próxima verificación en {remaining}m")
+            add_log(state, f"⏸ Baja liquidez, next check in {remaining}m")
+            save_state(state)
+            return
+
+        state["next_liquidity_check"] = (now_utc + timedelta(minutes=30)).isoformat()
+        log.warning(f"  ⏸ Baja liquidez ({now_utc.hour:02d}:00 UTC) — próxima verificación en 30m")
+        add_log(state, "⏸ Baja liquidez, siguiente chequeo en 30m")
+        save_state(state)
         return
-    
-    state = load_state()
+
+    if state.get("next_liquidity_check"):
+        state["next_liquidity_check"] = None
+        save_state(state)
+
     now = datetime.now()
 
     # Cooldown cleanup
