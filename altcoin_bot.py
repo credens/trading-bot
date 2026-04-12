@@ -409,9 +409,9 @@ def _close_position(state, symbol, pos, exit_price, exit_reason, note=""):
             else:
                 cd_min = 30   # 30 min por EMERGENCY
         elif exit_reason in ("STOP_LOSS", "EARLY_EXIT"):
-            cd_min = 30  # Antes 10, ahora 30 min para evitar re-entry inmediato en ruido
+            cd_min = 10  # Volvemos a 10 min por SL a pedido del usuario
         else:
-            cd_min = 10
+            cd_min = 5
         state.setdefault("cooldowns", {})[symbol] = (datetime.now() + timedelta(minutes=cd_min)).isoformat()
 
     if symbol in state["positions"]:

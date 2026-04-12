@@ -1,34 +1,34 @@
 {
-  "generated_at": "2026-04-12T14:35:38.642248",
-  "total_trades": 1107,
+  "generated_at": "2026-04-12T15:42:15.042222",
+  "total_trades": 1111,
   "overall": {
-    "count": 1107,
+    "count": 1111,
     "win_rate_pct": 38.5,
-    "total_pnl": -416.23,
+    "total_pnl": -418.53,
     "avg_pnl_per_trade": -0.38,
-    "avg_pnl_pct": 0.57,
-    "avg_win": 21.68,
-    "avg_loss": -14.17,
+    "avg_pnl_pct": 0.55,
+    "avg_win": 21.58,
+    "avg_loss": -14.14,
     "profit_factor": 0.96,
     "max_drawdown": 7548.73,
-    "avg_duration_min": 69.7,
-    "wins": 426,
-    "losses": 681
+    "avg_duration_min": 69.5,
+    "wins": 428,
+    "losses": 683
   },
   "by_bot": {
     "altcoins": {
-      "count": 597,
+      "count": 601,
       "win_rate_pct": 46.6,
-      "total_pnl": 333.21,
-      "avg_pnl_per_trade": 0.56,
-      "avg_pnl_pct": 1.65,
-      "avg_win": 4.93,
-      "avg_loss": -3.25,
+      "total_pnl": 330.91,
+      "avg_pnl_per_trade": 0.55,
+      "avg_pnl_pct": 1.6,
+      "avg_win": 4.9,
+      "avg_loss": -3.24,
       "profit_factor": 1.32,
       "max_drawdown": 136.19,
-      "avg_duration_min": 127.7,
-      "wins": 278,
-      "losses": 319
+      "avg_duration_min": 127.0,
+      "wins": 280,
+      "losses": 321
     },
     "binance": {
       "count": 145,
@@ -91,8 +91,8 @@
   },
   "by_exit_reason": {
     "EMERGENCY": {
-      "count": 4,
-      "total_pnl": -141.04
+      "count": 6,
+      "total_pnl": -144.41
     },
     "EMERGENCY_EXIT": {
       "count": 3,
@@ -107,8 +107,8 @@
       "total_pnl": -92.49
     },
     "STOP_LOSS": {
-      "count": 721,
-      "total_pnl": -8870.2
+      "count": 723,
+      "total_pnl": -8869.13
     },
     "TAKE_PROFIT": {
       "count": 217,
@@ -142,50 +142,6 @@
     "entry_time": "2026-04-09T10:24:30.469998"
   },
   "recent_10": [
-    {
-      "id": "",
-      "bot": "altcoins",
-      "symbol": "FARTCOINUSDT",
-      "side": "",
-      "exit_reason": "TIME_LIMIT",
-      "pnl": 5.9,
-      "pnl_pct": 16.86,
-      "duration_min": 138.3,
-      "entry_time": "2026-04-09T07:30:16.835334"
-    },
-    {
-      "id": "",
-      "bot": "altcoins",
-      "symbol": "ARIAUSDT",
-      "side": "",
-      "exit_reason": "TAKE_PROFIT",
-      "pnl": 26.25,
-      "pnl_pct": 75.0,
-      "duration_min": 35.6,
-      "entry_time": "2026-04-09T09:48:45.869781"
-    },
-    {
-      "id": "",
-      "bot": "altcoins",
-      "symbol": "ARIAUSDT",
-      "side": "",
-      "exit_reason": "TAKE_PROFIT",
-      "pnl": 26.25,
-      "pnl_pct": 75.0,
-      "duration_min": 11.2,
-      "entry_time": "2026-04-09T10:24:30.789197"
-    },
-    {
-      "id": "",
-      "bot": "altcoins",
-      "symbol": "CLUSDT",
-      "side": "",
-      "exit_reason": "EMERGENCY",
-      "pnl": -11.89,
-      "pnl_pct": -23.78,
-      "duration_min": 4603.5,
-      "entry_time": "2026-04-09T09:48:44.659493"
-    },
     {
       "id": "",
       "bot": "altcoins",
@@ -251,6 +207,50 @@
       "pnl_pct": -7.44,
       "duration_min": 1.0,
       "entry_time": "2026-04-12T14:34:37.186267"
+    },
+    {
+      "id": "",
+      "bot": "altcoins",
+      "symbol": "AIOTUSDT",
+      "side": "",
+      "exit_reason": "EMERGENCY",
+      "pnl": -1.05,
+      "pnl_pct": -7.53,
+      "duration_min": 6.7,
+      "entry_time": "2026-04-12T14:50:24.713218"
+    },
+    {
+      "id": "",
+      "bot": "altcoins",
+      "symbol": "TAOUSDT",
+      "side": "",
+      "exit_reason": "STOP_LOSS",
+      "pnl": 0.37,
+      "pnl_pct": 2.68,
+      "duration_min": 29.1,
+      "entry_time": "2026-04-12T14:52:40.728248"
+    },
+    {
+      "id": "",
+      "bot": "altcoins",
+      "symbol": "AIOTUSDT",
+      "side": "",
+      "exit_reason": "EMERGENCY",
+      "pnl": -2.32,
+      "pnl_pct": -23.18,
+      "duration_min": 1.0,
+      "entry_time": "2026-04-12T15:34:27.779474"
+    },
+    {
+      "id": "",
+      "bot": "altcoins",
+      "symbol": "CLUSDT",
+      "side": "",
+      "exit_reason": "STOP_LOSS",
+      "pnl": 0.7,
+      "pnl_pct": 4.99,
+      "duration_min": 48.4,
+      "entry_time": "2026-04-12T14:53:49.604081"
     }
   ]
 }

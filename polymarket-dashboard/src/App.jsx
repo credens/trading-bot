@@ -1019,6 +1019,14 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* Alerta Global de Liquidez */}
+      {(scData.next_liquidity_check || altData.next_liquidity_check) && (
+        <div style={{ margin: "10px 28px -10px", padding: "8px 16px", background: "rgba(255, 184, 0, 0.1)", border: "1px solid rgba(255, 184, 0, 0.3)", borderRadius: 8, color: "#ffb800", fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
+          <span>⚠️</span>
+          <span>MODO AHORRO: El mercado está fuera de horas peak o con bajo volumen. Los bots están en espera.</span>
+        </div>
+      )}
+
       {/* P&L Summary bar */}
       {(() => {
         const bots = [
