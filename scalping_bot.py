@@ -87,7 +87,7 @@ import json as _json
 def get_client():
     from binance.client import Client
     # Aumentar el timeout de 10s (default) a 30s para evitar ReadTimeoutError
-    return Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, {'timeout': 30})
+    return Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, requests_params={'timeout': 30})
 
 
 # ─── Datos de Mercado ─────────────────────────────────────────────────────────
