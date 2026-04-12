@@ -92,7 +92,8 @@ def acquire_lock():
 
 def get_client():
     from binance.client import Client
-    return Client(BINANCE_API_KEY, BINANCE_SECRET_KEY)
+    # Aumentar el timeout de 10s (default) a 30s para evitar ReadTimeoutError
+    return Client(BINANCE_API_KEY, BINANCE_SECRET_KEY, {'timeout': 30})
 
 # ─── Market Scanner ──────────────────────────────────────────────────────────
 
