@@ -31,9 +31,41 @@
   "max_drawdown": 0.0,
   "peak_capital": 200.0,
   "trades_today": 1,
-  "last_updated": "2026-04-12T14:45:49.667439",
+  "last_updated": "2026-04-12T14:49:52.818080",
   "next_liquidity_check": null,
   "cycle_log": [
+    {
+      "time": "14:49:52",
+      "msg": "HOLD \u2014 LONG activo | ADX:26 CVD:\u2191"
+    },
+    {
+      "time": "14:49:22",
+      "msg": "HOLD forzado \u2014 min hold 234s (TREND_STRONG)"
+    },
+    {
+      "time": "14:48:52",
+      "msg": "HOLD \u2014 LONG activo | ADX:28 CVD:\u2191"
+    },
+    {
+      "time": "14:48:21",
+      "msg": "HOLD \u2014 LONG activo | ADX:28 CVD:\u2191"
+    },
+    {
+      "time": "14:47:51",
+      "msg": "HOLD forzado \u2014 min hold 325s (TREND_STRONG)"
+    },
+    {
+      "time": "14:47:20",
+      "msg": "HOLD \u2014 LONG activo | ADX:28 CVD:\u2193"
+    },
+    {
+      "time": "14:46:50",
+      "msg": "HOLD \u2014 LONG activo | ADX:32 CVD:\u2191"
+    },
+    {
+      "time": "14:46:20",
+      "msg": "HOLD \u2014 LONG activo | ADX:32 CVD:\u2191"
+    },
     {
       "time": "14:45:49",
       "msg": "HOLD \u2014 LONG activo | ADX:32 CVD:\u2191"
@@ -59,10 +91,10 @@
       "msg": "SCALP LONG | entrada $70,944 | SL $70,660 | TP $71,866 | size $20"
     }
   ],
-  "btc_price": 70943.8,
-  "rsi": 46.52,
+  "btc_price": 70952.4,
+  "rsi": 52.6,
   "trend": "bullish",
   "macd_cross": "bullish",
   "funding_rate": 0.0,
-  "vol_ratio": 0.58
+  "vol_ratio": 1.26
 }
