@@ -21,7 +21,7 @@
       "reasoning": "TREND LONG score:5 | EMA bullish | RSI 47 | VWAP +0.09%",
       "confidence": "HIGH",
       "leverage": 10,
-      "best_price": 70955.2
+      "best_price": 71148.5
     }
   ],
   "closed_trades": [],
@@ -31,9 +31,53 @@
   "max_drawdown": 0.0,
   "peak_capital": 200.0,
   "trades_today": 1,
-  "last_updated": "2026-04-12T14:49:52.818080",
+  "last_updated": "2026-04-12T14:55:27.243432",
   "next_liquidity_check": null,
   "cycle_log": [
+    {
+      "time": "14:55:27",
+      "msg": "HOLD \u2014 LONG activo | ADX:46 CVD:\u2191"
+    },
+    {
+      "time": "14:54:56",
+      "msg": "HOLD \u2014 LONG activo | ADX:49 CVD:\u2191"
+    },
+    {
+      "time": "14:54:26",
+      "msg": "HOLD \u2014 LONG activo | ADX:49 CVD:\u2191"
+    },
+    {
+      "time": "14:53:56",
+      "msg": "HOLD \u2014 LONG activo | ADX:46 CVD:\u2191"
+    },
+    {
+      "time": "14:53:25",
+      "msg": "HOLD \u2014 LONG activo | ADX:46 CVD:\u2191"
+    },
+    {
+      "time": "14:52:54",
+      "msg": "HOLD \u2014 LONG activo | ADX:42 CVD:\u2191"
+    },
+    {
+      "time": "14:52:24",
+      "msg": "HOLD \u2014 LONG activo | ADX:42 CVD:\u2191"
+    },
+    {
+      "time": "14:51:54",
+      "msg": "HOLD \u2014 LONG activo | ADX:36 CVD:\u2191"
+    },
+    {
+      "time": "14:51:23",
+      "msg": "HOLD \u2014 LONG activo | ADX:33 CVD:\u2191"
+    },
+    {
+      "time": "14:50:53",
+      "msg": "HOLD \u2014 LONG activo | ADX:31 CVD:\u2191"
+    },
+    {
+      "time": "14:50:23",
+      "msg": "HOLD \u2014 LONG activo | ADX:31 CVD:\u2191"
+    },
     {
       "time": "14:49:52",
       "msg": "HOLD \u2014 LONG activo | ADX:26 CVD:\u2191"
@@ -91,10 +135,10 @@
       "msg": "SCALP LONG | entrada $70,944 | SL $70,660 | TP $71,866 | size $20"
     }
   ],
-  "btc_price": 70952.4,
-  "rsi": 52.6,
+  "btc_price": 71070.0,
+  "rsi": 63.67,
   "trend": "bullish",
-  "macd_cross": "bullish",
+  "macd_cross": "bearish",
   "funding_rate": 0.0,
-  "vol_ratio": 1.26
+  "vol_ratio": 0.54
 }

@@ -174,3 +174,129 @@ Analizando 11 candidatos...
 2026-04-12 14:49:52,817 [SCALP]   Escenario: TREND_STRONG | bias=bullish | regimes=['TREND', 'BREAKOUT']
 2026-04-12 14:49:52,818 [SCALP]   → HOLD [MEDIUM] | LONG activo | ADX:26 CVD:↑
 2026-04-12 14:49:52,818 [SCALP]   Capital: $180.00 | P&L: +0.00 | Win: 0%
+2026-04-12 14:50:16,182 [INFO] 
+========================================
+ALTCOIN CYCLE - 14:50:16
+========================================
+2026-04-12 14:50:16,793 [INFO] Capital: $200.00 | Posiciones: 2/10 | Cooldowns: 0
+2026-04-12 14:50:16,794 [INFO] P&L total: $+0.00
+2026-04-12 14:50:17,110 [INFO]   Escenario: TREND_STRONG | bias=bullish
+2026-04-12 14:50:17,110 [INFO] 
+Analizando 11 candidatos...
+2026-04-12 14:50:18,343 [INFO]     ⛔ ALPACAUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:50:22,824 [SCALP] ── CICLO 14:50:22 ──────────────────────────
+2026-04-12 14:50:23,139 [SCALP]   BTC $70,981.40 | Regime:BREAKOUT ADX:31 | EMA:bullish RSI:56.56 CVD:↑ Vol:3.8x | Pos:LONG
+2026-04-12 14:50:23,142 [SCALP]   Escenario: TREND_STRONG | bias=bullish | regimes=['TREND', 'BREAKOUT']
+2026-04-12 14:50:23,143 [SCALP]   → HOLD [MEDIUM] | LONG activo | ADX:31 CVD:↑
+2026-04-12 14:50:23,144 [SCALP]   Capital: $180.00 | P&L: +0.00 | Win: 0%
+2026-04-12 14:50:23,465 [INFO]     ⛔ TAOUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:50:24,099 [INFO]     ⛔ ALPHAUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:50:24,713 [INFO]     ⛔ ENJUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:50:24,713 [INFO]   [PAPER] ✓ PAPER LONG AIOTUSDT @ $0.0558 | EMA_CROSS | SL 3.4% | TP 12.7% | $14
+2026-04-12 14:50:24,714 [INFO] Ciclo completado: 1 nuevas posiciones abiertas
+2026-04-12 14:50:53,151 [SCALP] ── CICLO 14:50:53 ──────────────────────────
+2026-04-12 14:50:53,491 [SCALP]   BTC $71,000.40 | Regime:BREAKOUT ADX:31 | EMA:bullish RSI:59.22 CVD:↑ Vol:4.8x | Pos:LONG
+2026-04-12 14:50:53,492 [SCALP]   Escenario: TREND_STRONG | bias=bullish | regimes=['TREND', 'BREAKOUT']
+2026-04-12 14:50:53,492 [SCALP]   → HOLD [MEDIUM] | LONG activo | ADX:31 CVD:↑
+2026-04-12 14:50:53,493 [SCALP]   Capital: $180.00 | P&L: +0.00 | Win: 0%
+2026-04-12 14:51:23,501 [SCALP] ── CICLO 14:51:23 ──────────────────────────
+2026-04-12 14:51:23,898 [SCALP]   BTC $71,026.80 | Regime:TREND ADX:33 | EMA:bullish RSI:65.76 CVD:↑ Vol:1.3x | Pos:LONG
+2026-04-12 14:51:23,900 [SCALP]   Escenario: TREND_STRONG | bias=bullish | regimes=['TREND', 'BREAKOUT']
+2026-04-12 14:51:23,901 [SCALP]   → HOLD [MEDIUM] | LONG activo | ADX:33 CVD:↑
+2026-04-12 14:51:23,901 [SCALP]   Capital: $180.00 | P&L: +0.00 | Win: 0%
+2026-04-12 14:51:24,721 [INFO] 
+========================================
+ALTCOIN CYCLE - 14:51:24
+========================================
+2026-04-12 14:51:25,676 [INFO] Capital: $200.00 | Posiciones: 3/10 | Cooldowns: 0
+2026-04-12 14:51:25,676 [INFO] P&L total: $+0.00
+2026-04-12 14:51:26,047 [INFO]   Escenario: TREND_STRONG | bias=bullish
+2026-04-12 14:51:26,047 [INFO] 
+Analizando 10 candidatos...
+2026-04-12 14:51:27,582 [INFO]     ⛔ ALPACAUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:51:32,658 [INFO]     ⛔ ALPHAUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:51:33,268 [INFO]     ⛔ ENJUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:51:33,269 [INFO]   [PAPER] ✓ PAPER LONG SOLUSDT @ $81.9800 | RANGE | SL 0.6% | TP 3.8% | $14
+2026-04-12 14:51:33,270 [INFO] Ciclo completado: 1 nuevas posiciones abiertas
+2026-04-12 14:51:53,908 [SCALP] ── CICLO 14:51:53 ──────────────────────────
+2026-04-12 14:51:54,242 [SCALP]   BTC $71,133.60 | Regime:BREAKOUT ADX:36 | EMA:bullish RSI:73.59 CVD:↑ Vol:7.3x | Pos:LONG
+2026-04-12 14:51:54,244 [SCALP]   Escenario: TREND_STRONG | bias=bullish | regimes=['TREND', 'BREAKOUT']
+2026-04-12 14:51:54,244 [SCALP]   → HOLD [MEDIUM] | LONG activo | ADX:36 CVD:↑
+2026-04-12 14:51:54,246 [SCALP]   Capital: $180.00 | P&L: +0.00 | Win: 0%
+2026-04-12 14:52:24,253 [SCALP] ── CICLO 14:52:24 ──────────────────────────
+2026-04-12 14:52:24,588 [SCALP]   BTC $71,148.50 | Regime:TREND ADX:42 | EMA:bullish RSI:74.7 CVD:↑ Vol:0.7x | Pos:LONG
+2026-04-12 14:52:24,590 [SCALP]   Escenario: TREND_STRONG | bias=bullish | regimes=['TREND', 'BREAKOUT']
+2026-04-12 14:52:24,590 [SCALP]   → HOLD [MEDIUM] | LONG activo | ADX:42 CVD:↑
+2026-04-12 14:52:24,591 [SCALP]   Capital: $180.00 | P&L: +0.00 | Win: 0%
+2026-04-12 14:52:33,274 [INFO] 
+========================================
+ALTCOIN CYCLE - 14:52:33
+========================================
+2026-04-12 14:52:34,483 [INFO] Capital: $200.00 | Posiciones: 4/10 | Cooldowns: 0
+2026-04-12 14:52:34,483 [INFO] P&L total: $+0.00
+2026-04-12 14:52:34,800 [INFO]   Escenario: TREND_STRONG | bias=bullish
+2026-04-12 14:52:34,800 [INFO] 
+Analizando 9 candidatos...
+2026-04-12 14:52:36,023 [INFO]     ⛔ ALPACAUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:52:38,075 [INFO]     ⛔ CLUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:52:40,116 [INFO]     ⛔ ALPHAUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:52:40,728 [INFO]     ⛔ ENJUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:52:40,728 [INFO]   [PAPER] ✓ PAPER LONG TAOUSDT @ $261.3400 | RANGE | SL 0.5% | TP 3.0% | $14
+2026-04-12 14:52:40,730 [INFO] Ciclo completado: 1 nuevas posiciones abiertas
+2026-04-12 14:52:54,598 [SCALP] ── CICLO 14:52:54 ──────────────────────────
+2026-04-12 14:52:54,943 [SCALP]   BTC $71,133.20 | Regime:TREND ADX:42 | EMA:bullish RSI:72.4 CVD:↑ Vol:1.1x | Pos:LONG
+2026-04-12 14:52:54,944 [SCALP]   Escenario: TREND_STRONG | bias=bullish | regimes=['TREND', 'BREAKOUT']
+2026-04-12 14:52:54,944 [SCALP]   → HOLD [MEDIUM] | LONG activo | ADX:42 CVD:↑
+2026-04-12 14:52:54,945 [SCALP]   Capital: $180.00 | P&L: +0.00 | Win: 0%
+2026-04-12 14:53:24,951 [SCALP] ── CICLO 14:53:24 ──────────────────────────
+2026-04-12 14:53:25,358 [SCALP]   BTC $71,136.20 | Regime:TREND ADX:46 | EMA:bullish RSI:66.84 CVD:↑ Vol:0.7x | Pos:LONG
+2026-04-12 14:53:25,757 [SCALP]   Escenario: TREND_STRONG | bias=bullish | regimes=['TREND', 'BREAKOUT']
+2026-04-12 14:53:25,758 [SCALP]   → HOLD [MEDIUM] | LONG activo | ADX:46 CVD:↑
+2026-04-12 14:53:25,759 [SCALP]   Capital: $180.00 | P&L: +0.00 | Win: 0%
+2026-04-12 14:53:40,736 [INFO] 
+========================================
+ALTCOIN CYCLE - 14:53:40
+========================================
+2026-04-12 14:53:42,435 [INFO] Capital: $200.00 | Posiciones: 5/10 | Cooldowns: 0
+2026-04-12 14:53:42,435 [INFO] P&L total: $+0.00
+2026-04-12 14:53:42,854 [INFO]   Escenario: TREND_STRONG | bias=bullish
+2026-04-12 14:53:42,854 [INFO] 
+Analizando 8 candidatos...
+2026-04-12 14:53:44,381 [INFO]     ⛔ ALPACAUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:53:48,886 [INFO]     ⛔ ALPHAUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:53:49,603 [INFO]     ⛔ ENJUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:53:49,604 [INFO]   [PAPER] ✓ PAPER LONG CLUSDT @ $96.1900 | RANGE | SL 0.5% | TP 3.0% | $14
+2026-04-12 14:53:49,608 [INFO] Ciclo completado: 1 nuevas posiciones abiertas
+2026-04-12 14:53:55,763 [SCALP] ── CICLO 14:53:55 ──────────────────────────
+2026-04-12 14:53:56,170 [SCALP]   BTC $71,119.50 | Regime:TREND ADX:46 | EMA:bullish RSI:65.7 CVD:↑ Vol:1.1x | Pos:LONG
+2026-04-12 14:53:56,171 [SCALP]   Escenario: TREND_STRONG | bias=bullish | regimes=['TREND', 'BREAKOUT']
+2026-04-12 14:53:56,171 [SCALP]   → HOLD [MEDIUM] | LONG activo | ADX:46 CVD:↑
+2026-04-12 14:53:56,172 [SCALP]   Capital: $180.00 | P&L: +0.00 | Win: 0%
+2026-04-12 14:54:26,178 [SCALP] ── CICLO 14:54:26 ──────────────────────────
+2026-04-12 14:54:26,588 [SCALP]   BTC $71,123.50 | Regime:TREND ADX:49 | EMA:bullish RSI:68.52 CVD:↑ Vol:0.2x | Pos:LONG
+2026-04-12 14:54:26,590 [SCALP]   Escenario: TREND_STRONG | bias=bullish | regimes=['TREND', 'BREAKOUT']
+2026-04-12 14:54:26,590 [SCALP]   → HOLD [MEDIUM] | LONG activo | ADX:49 CVD:↑
+2026-04-12 14:54:26,592 [SCALP]   Capital: $180.00 | P&L: +0.00 | Win: 0%
+2026-04-12 14:54:49,613 [INFO] 
+========================================
+ALTCOIN CYCLE - 14:54:49
+========================================
+2026-04-12 14:54:52,375 [INFO] Capital: $200.00 | Posiciones: 6/10 | Cooldowns: 0
+2026-04-12 14:54:52,375 [INFO] P&L total: $+0.00
+2026-04-12 14:54:52,792 [INFO]   Escenario: TREND_STRONG | bias=bullish
+2026-04-12 14:54:52,792 [INFO] 
+Analizando 7 candidatos...
+2026-04-12 14:54:54,223 [INFO]     ⛔ ALPACAUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:54:56,597 [SCALP] ── CICLO 14:54:56 ──────────────────────────
+2026-04-12 14:54:56,919 [SCALP]   BTC $71,101.20 | Regime:TREND ADX:49 | EMA:bullish RSI:65.42 CVD:↑ Vol:0.4x | Pos:LONG
+2026-04-12 14:54:56,921 [SCALP]   Escenario: TREND_STRONG | bias=bullish | regimes=['TREND', 'BREAKOUT']
+2026-04-12 14:54:56,921 [SCALP]   → HOLD [MEDIUM] | LONG activo | ADX:49 CVD:↑
+2026-04-12 14:54:56,922 [SCALP]   Capital: $180.00 | P&L: +0.00 | Win: 0%
+2026-04-12 14:54:57,495 [INFO]     ⛔ ALPHAUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:54:58,212 [INFO]     ⛔ ENJUSDT SHORT bloqueado: contra tendencia en TREND_STRONG
+2026-04-12 14:54:58,215 [INFO] Ciclo completado: 0 nuevas posiciones abiertas
+2026-04-12 14:55:26,928 [SCALP] ── CICLO 14:55:26 ──────────────────────────
+2026-04-12 14:55:27,242 [SCALP]   BTC $71,070.00 | Regime:TREND ADX:46 | EMA:bullish RSI:63.67 CVD:↑ Vol:0.5x | Pos:LONG
+2026-04-12 14:55:27,243 [SCALP]   Escenario: TREND_STRONG | bias=bullish | regimes=['TREND', 'BREAKOUT']
+2026-04-12 14:55:27,243 [SCALP]   → HOLD [MEDIUM] | LONG activo | ADX:46 CVD:↑
+2026-04-12 14:55:27,244 [SCALP]   Capital: $180.00 | P&L: +0.00 | Win: 0%
