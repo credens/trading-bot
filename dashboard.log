@@ -3,24 +3,7 @@
 > vite --port 5173
 
 
-  VITE v8.0.0-beta.18  ready in 214 ms
+  [32m[1mVITE[22m v8.0.0-beta.18[39m  [2mready in [0m[1m212[22m[2m[0m ms[22m
 
-  ➜  Local:   http://localhost:5173/
-  ➜  Network: use --host to expose
-11:08:30 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-11:08:32 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-11:08:40 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-11:09:02 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-11:37:19 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-11:37:50 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-11:44:26 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-11:44:28 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-11:45:24 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-11:47:23 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-11:47:25 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-11:49:19 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-11:49:38 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-11:49:43 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-11:55:42 PM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-7:29:55 AM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
-10:35:25 AM [vite] (client) [console.error] Received NaN for the `y1` attribute. If this is expected, cast the value to a string.
+  [32m➜[39m  [1mLocal[22m:   [36mhttp://localhost:[1m5173[22m/[39m
+[2m  [32m➜[39m  [1mNetwork[22m[2m: use [22m[1m--host[22m[2m to expose[22m

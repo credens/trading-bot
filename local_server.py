@@ -28,6 +28,16 @@ STATE_FILES = {
     "scalping": BASE_DIR / "paper_trading" / "scalping_state.json",
 }
 
+EDITABLE_FILES = [
+    "altcoin_bot.py",
+    "scalping_bot.py",
+    "market_scenario.py",
+    "notifications.py",
+    "trade_logger.py",
+    "daily_report.py",
+    "local_server.py"
+]
+
 
 class Handler(BaseHTTPRequestHandler):
 
@@ -49,6 +59,26 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parts = self.path.split("?")[0].strip("/").split("/")
+
+        # GET /files — listar archivos editables
+        if parts[0] == "files" and len(parts) == 1:
+            self._send(200, {"files": EDITABLE_FILES})
+            return
+
+        # GET /file?name=xxx — leer contenido de un archivo
+        if parts[0] == "file" and len(parts) == 1:
+            from urllib.parse import urlparse, parse_qs
+            query = parse_qs(urlparse(self.path).query)
+            filename = query.get("name", [None])[0]
+            if filename in EDITABLE_FILES:
+                path = BASE_DIR / filename
+                if path.exists():
+                    self._send(200, {"content": path.read_text(), "name": filename})
+                else:
+                    self._send(404, {"error": "file not found"})
+            else:
+                self._send(403, {"error": "forbidden"})
+            return
 
         # GET /stats  — estadísticas globales de todos los bots
         if parts[0] == "stats" and len(parts) == 1:
@@ -75,6 +105,26 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "not found"})
 
     def do_POST(self):
+        # POST /file  body={"name": "xxx", "content": "..."}
+        parts = self.path.split("?")[0].strip("/").split("/")
+        if parts[0] == "file" and len(parts) == 1:
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(length)
+                data = json.loads(body)
+                filename = data.get("name")
+                content = data.get("content")
+                if filename in EDITABLE_FILES:
+                    path = BASE_DIR / filename
+                    path.write_text(content)
+                    log.info(f"Archivo {filename} actualizado desde dashboard")
+                    self._send(200, {"status": "ok"})
+                else:
+                    self._send(403, {"error": "forbidden"})
+            except Exception as e:
+                self._send(500, {"error": str(e)})
+            return
+
         # POST /state/binance  body=JSON completo del estado
         parts = self.path.split("?")[0].strip("/").split("/")
         if len(parts) == 2 and parts[0] == "state":
@@ -98,7 +148,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = 8765
+    port = 8080
     server = HTTPServer(("localhost", port), Handler)
     log.info(f"Local state server corriendo en http://localhost:{port}")
     log.info("  GET  /state/altcoins  — leer estado Altcoins")

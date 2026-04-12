@@ -794,6 +794,48 @@ function lsSave(key, data) {
   try { localStorage.setItem(key, JSON.stringify(data)); } catch {}
 }
 
+function CodeEditor({ files }) {
+  const [selectedFile, setSelectedFile] = useState("");
+  const [content, setContent] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const LOCAL_API = "http://localhost:8082";
+
+  const loadFile = async (name) => {
+    if (!name) return;
+    setLoading(true);
+    try {
+      const r = await fetch(`${LOCAL_API}/file?name=${name}`);
+      const d = await r.json();
+      if (d.content) {
+        setContent(d.content);
+        setSelectedFile(name);
+      }
+    } catch (e) { alert("Error cargando archivo"); }
+    setLoading(false);
+  };
+
+  const saveFile = async () => {
+    if (!selectedFile) return;
+    setSaving(true);
+    try {
+      const r = await fetch(`${LOCAL_API}/file`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: selectedFile, content })
+      });
+      if (r.ok) {
+        alert("Archivo guardado con éxito");
+      } else {
+        alert("Error al guardar");
+      }
+    } catch (e) { alert("Error de conexión"); }
+    setSaving(false);
+  };
+
+  return null;
+}
+
 // ─── Dashboard Principal ───────────────────────────────────────────────────────
 export default function Dashboard() {
   const [scData, setScData]   = useState(() => lsLoad(LS_KEY.scalping,  MOCK_SC));
@@ -805,7 +847,7 @@ export default function Dashboard() {
   const [time, setTime] = useState(new Date());
   const [lastFetch, setLastFetch] = useState("--");
 
-  const LOCAL_API = "http://localhost:8765";
+  const LOCAL_API = "http://localhost:8082";
 
   const fetchStates = useCallback(async () => {
     const recentManualClose = Date.now() - lastManualClose.current < 30000;
@@ -1039,7 +1081,7 @@ export default function Dashboard() {
       </div>
 
       <div style={{ margin:"0 28px", padding:"12px 18px", background:"rgba(0,255,136,0.03)", border:"1px solid rgba(0,255,136,0.1)", borderRadius:10, fontSize:11, color:"#ccc" }}>
-        <span style={{ color:"#00ff88" }}>● PAPER TRADING</span> — Datos reales, dinero simulado. Actualizando cada 15s desde <code style={{ color:"#ccc" }}>localhost:8765</code>
+        <span style={{ color:"#00ff88" }}>● PAPER TRADING</span> — Datos reales, dinero simulado. Actualizando cada 15s desde <code style={{ color:"#ccc" }}>localhost:8082</code>
       </div>
     </div>
   );
