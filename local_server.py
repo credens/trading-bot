@@ -149,7 +149,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = 8082
-    server = HTTPServer(("localhost", port), Handler)
+    server = HTTPServer(("0.0.0.0", port), Handler)
     log.info(f"Local state server corriendo en http://localhost:{port}")
     log.info("  GET  /state/altcoins  — leer estado Altcoins")
     log.info("  POST /state/altcoins  — escribir estado Altcoins")
