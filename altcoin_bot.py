@@ -50,9 +50,9 @@ INTERVAL_MINUTES = int(os.getenv("ALTCOIN_INTERVAL",   "3"))
 MIN_VOLUME_USDT  = float(os.getenv("ALTCOIN_MIN_VOLUME","300000000"))
 TOP_N            = int(os.getenv("ALTCOIN_TOP_N",       "20"))
 CANDLE_INTERVAL  = os.getenv("ALTCOIN_CANDLE", "5m")
-DEFAULT_SL_PCT   = float(os.getenv("ALTCOIN_SL",  "0.006"))     # SL fallback 0.6%
-DEFAULT_TP_PCT   = float(os.getenv("ALTCOIN_TP",  "0.025"))     # TP fallback 2.5%
-TRAILING_TRIGGER = float(os.getenv("ALTCOIN_TRAIL", "0.004"))   # trailing trigger fallback
+DEFAULT_SL_PCT   = float(os.getenv("ALTCOIN_SL",  "0.012"))     # SL fallback 1.2%
+DEFAULT_TP_PCT   = float(os.getenv("ALTCOIN_TP",  "0.040"))     # TP fallback 4.0%
+TRAILING_TRIGGER = float(os.getenv("ALTCOIN_TRAIL", "0.008"))   # trailing trigger fallback
 TP_CALLBACK_PCT  = float(os.getenv("ALTCOIN_TP_CALLBACK", "0.003"))  # TTP callback fallback
 TIME_LIMIT_MIN   = int(os.getenv("ALTCOIN_TIME_LIMIT", "60"))   # cerrar si stale > 60min
 
@@ -409,9 +409,9 @@ def _close_position(state, symbol, pos, exit_price, exit_reason, note=""):
             else:
                 cd_min = 30   # 30 min por EMERGENCY
         elif exit_reason in ("STOP_LOSS", "EARLY_EXIT"):
-            cd_min = 10
+            cd_min = 30  # Antes 10, ahora 30 min para evitar re-entry inmediato en ruido
         else:
-            cd_min = 5
+            cd_min = 10
         state.setdefault("cooldowns", {})[symbol] = (datetime.now() + timedelta(minutes=cd_min)).isoformat()
 
     if symbol in state["positions"]:
