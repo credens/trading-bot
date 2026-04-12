@@ -1,4 +1,4 @@
-Y#!/bin/bash
+#!/bin/bash
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 echo "🛑 Deteniendo Trading Bot HQ..."
