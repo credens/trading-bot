@@ -193,7 +193,7 @@ class PaperTradingEngine:
 
 SCALPING_STATE = STATE_DIR / "scalping_state.json"
 
-def get_scalping_engine(initial_capital: float = 500.0) -> PaperTradingEngine:
+def get_scalping_engine(initial_capital: float = 200.0) -> PaperTradingEngine:
     return PaperTradingEngine("scalping", initial_capital, SCALPING_STATE)
 
 
