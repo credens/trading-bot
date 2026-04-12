@@ -3,7 +3,7 @@ Local State Server
 ==================
 Servidor minimalista que permite al dashboard leer y escribir
 los archivos JSON de estado directamente.
-Corre en localhost:8765 junto al dashboard de Vite.
+Corre en localhost:8082 junto al dashboard de Vite.
 
 Uso:
   python3 local_server.py
@@ -148,7 +148,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    port = 8080
+    port = 8082
     server = HTTPServer(("localhost", port), Handler)
     log.info(f"Local state server corriendo en http://localhost:{port}")
     log.info("  GET  /state/altcoins  — leer estado Altcoins")
