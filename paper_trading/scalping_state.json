@@ -1,29 +1,8 @@
 {
   "bot": "scalping",
   "initial_capital": 200.0,
-  "current_capital": 180.42,
-  "open_trades": [
-    {
-      "id": "SC-151643",
-      "bot": "scalping",
-      "side": "LONG",
-      "entry_price": 71093.5,
-      "entry_time": "2026-04-12T15:16:43.839639",
-      "size": 20.05,
-      "stop_loss": 70809.13,
-      "take_profit": 72017.72,
-      "exit_price": null,
-      "exit_time": null,
-      "exit_reason": null,
-      "pnl": null,
-      "pnl_pct": null,
-      "status": "OPEN",
-      "reasoning": "TREND LONG score:4 | EMA bullish | RSI 56 | VWAP +0.14%",
-      "confidence": "HIGH",
-      "leverage": 10,
-      "best_price": 71156.8
-    }
-  ],
+  "current_capital": 200.42999999999998,
+  "open_trades": [],
   "closed_trades": [
     {
       "id": "SC-144317",
@@ -44,17 +23,69 @@
       "confidence": "HIGH",
       "leverage": 10,
       "best_price": 71161.6
+    },
+    {
+      "id": "SC-151643",
+      "bot": "scalping",
+      "side": "LONG",
+      "entry_price": 71093.5,
+      "entry_time": "2026-04-12T15:16:43.839639",
+      "size": 20.05,
+      "stop_loss": 70809.13,
+      "take_profit": 72017.72,
+      "exit_price": 71080.0,
+      "exit_time": "2026-04-12T15:47:07.319447",
+      "exit_reason": "SIGNAL",
+      "pnl": -0.04,
+      "pnl_pct": -0.19,
+      "status": "CLOSED",
+      "reasoning": "TREND LONG score:4 | EMA bullish | RSI 56 | VWAP +0.14%",
+      "confidence": "HIGH",
+      "leverage": 10,
+      "best_price": 71156.8
     }
   ],
-  "total_pnl": 0.47,
-  "total_pnl_pct": 0.23,
-  "win_rate": 100.0,
-  "max_drawdown": 0.0,
+  "total_pnl": 0.43,
+  "total_pnl_pct": 0.21,
+  "win_rate": 50.0,
+  "max_drawdown": 0.01995311019106124,
   "peak_capital": 200.47,
   "trades_today": 2,
-  "last_updated": "2026-04-12T15:43:34.468654",
+  "last_updated": "2026-04-12T15:47:37.649765",
   "next_liquidity_check": null,
   "cycle_log": [
+    {
+      "time": "15:47:37",
+      "msg": "FLAT \u2014 TREND sin confluencia (L:3 S:3)"
+    },
+    {
+      "time": "15:47:07",
+      "msg": "\u274c CERRADO SIGNAL | exit $71,080 | P&L -0.04 (-0.2%)"
+    },
+    {
+      "time": "15:46:36",
+      "msg": "HOLD \u2014 LONG activo | ADX:30 CVD:\u2191"
+    },
+    {
+      "time": "15:46:06",
+      "msg": "HOLD \u2014 LONG activo | ADX:30 CVD:\u2191"
+    },
+    {
+      "time": "15:45:36",
+      "msg": "HOLD \u2014 LONG activo | ADX:33 CVD:\u2193"
+    },
+    {
+      "time": "15:45:05",
+      "msg": "HOLD \u2014 LONG activo | ADX:33 CVD:\u2193"
+    },
+    {
+      "time": "15:44:35",
+      "msg": "HOLD \u2014 LONG activo | ADX:36 CVD:\u2193"
+    },
+    {
+      "time": "15:44:05",
+      "msg": "HOLD \u2014 LONG activo | ADX:36 CVD:\u2193"
+    },
     {
       "time": "15:43:34",
       "msg": "HOLD \u2014 LONG activo | ADX:38 CVD:\u2193"
@@ -222,44 +253,12 @@
     {
       "time": "15:22:48",
       "msg": "HOLD forzado \u2014 min hold 234s (TREND_STRONG)"
-    },
-    {
-      "time": "15:22:18",
-      "msg": "HOLD forzado \u2014 min hold 264s (TREND_STRONG)"
-    },
-    {
-      "time": "15:21:47",
-      "msg": "HOLD forzado \u2014 min hold 295s (TREND_STRONG)"
-    },
-    {
-      "time": "15:21:17",
-      "msg": "HOLD forzado \u2014 min hold 325s (TREND_STRONG)"
-    },
-    {
-      "time": "15:20:47",
-      "msg": "HOLD \u2014 LONG activo | ADX:21 CVD:\u2193"
-    },
-    {
-      "time": "15:20:16",
-      "msg": "HOLD \u2014 LONG activo | ADX:21 CVD:\u2193"
-    },
-    {
-      "time": "15:19:46",
-      "msg": "HOLD \u2014 LONG activo | ADX:21 CVD:\u2193"
-    },
-    {
-      "time": "15:19:15",
-      "msg": "HOLD \u2014 LONG activo | ADX:20 CVD:\u2193"
-    },
-    {
-      "time": "15:18:45",
-      "msg": "HOLD \u2014 LONG activo | ADX:23 CVD:\u2191"
     }
   ],
-  "btc_price": 71076.3,
-  "rsi": 57.48,
-  "trend": "bullish",
+  "btc_price": 71079.9,
+  "rsi": 49.43,
+  "trend": "bearish",
   "macd_cross": "bearish",
   "funding_rate": 0.0,
-  "vol_ratio": 0.4
+  "vol_ratio": 0.1
 }
