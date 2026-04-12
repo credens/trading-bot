@@ -49,8 +49,8 @@ LEVERAGE       = int(os.getenv("LEVERAGE", "3"))
 DRY_RUN        = os.getenv("DRY_RUN", "true").lower() == "true"
 SCALP_CAPITAL  = float(os.getenv("SCALP_CAPITAL", "500"))
 CYCLE_SECONDS  = int(os.getenv("SCALP_CYCLE_SECONDS", "30"))
-SL_PCT         = 0.004   # 0.4% mínimo
-TP_PCT         = 0.008   # 0.8% mínimo
+SL_PCT         = 0.008   # 0.8% mínimo
+TP_PCT         = 0.018   # 1.8% mínimo
 POS_PCT        = 0.15    # 15% del capital por trade
 MIN_HOLD_SECS  = 300     # 5 min mínimo antes de cerrar por SIGNAL
 SIGNAL_COOLDOWN_SECS = 180  # 3 min cooldown después de cerrar por SIGNAL
@@ -456,8 +456,8 @@ def update_trailing_stop(open_trade, price: float, atr: float = 0) -> Optional[f
     best = open_trade.best_price
     profit_pct = (best - entry) / entry if side == "LONG" else (entry - best) / entry
 
-    # ── No mover si profit < 0.3% (dejar respirar el trade) ─────
-    if profit_pct < 0.003:
+    # ── No mover si profit < 0.6% (dejar respirar el trade) ─────
+    if profit_pct < 0.006:
         return None
 
     # ── Distancia dinámica basada en ATR + profit ────────────────
