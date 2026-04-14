@@ -68,13 +68,7 @@ EXCLUDE = {"BUSDUSDT", "USDCUSDT", "TUSDUSDT", "USDTUSDT", "BTCUSDT",
            "BTCDOMUSDT", "DEFIUSDT", "BNXUSDT", "1000SHIBUSDT",
            "SIRENUSDT", "LOOMUSDT", "CVPUSDT", "BALUSDT",
            "1000LUNCUSDT", "LUNA2USDT", "ONTUSDT", "RIVERUSDT",
-           "HYPEUSDT", "XAGUSDT", "XAUUSDT", "PAXGUSDT", "1000PEPEUSDT",
-           # Tokens con pump/dump extremo — emergency exits repetidos
-           "BLESSUSDT",   # -33% en 2 min, 14/04
-           "RAVEUSDT",    # -34% en 1 min, múltiples días
-           "币安人生USDT", # token chino sospechoso, emergencias repetidas
-           "ARIAUSDT",    # emergencias casi siempre, win rate muy bajo
-           }
+           "HYPEUSDT", "XAGUSDT", "XAUUSDT", "PAXGUSDT", "1000PEPEUSDT"}
 
 # ─── PID Lock ────────────────────────────────────────────────────────────────
 
@@ -405,17 +399,12 @@ def _close_position(state, symbol, pos, exit_price, exit_reason, note=""):
     }
     state["closed_trades"].append(trade)
 
-    # FIX 6: Cooldown mejorado - EMERGENCY: blacklist temporal 30min o 2h si 2+ emergencies
+    # Cooldown post-cierre negativo
     if pnl < 0:
         if exit_reason == "EMERGENCY":
-            # Contar EMERGENCY exits recientes para este symbol
-            recent_trades = [t for t in state["closed_trades"][-30:] if t.get("symbol") == symbol and t.get("exit_reason") == "EMERGENCY"]
-            if len(recent_trades) >= 2:
-                cd_min = 120  # 2 horas si tiene 2+ EMERGENCY
-            else:
-                cd_min = 30   # 30 min por EMERGENCY
+            cd_min = 90   # 90 min por EMERGENCY (pump/dump protection)
         elif exit_reason in ("STOP_LOSS", "EARLY_EXIT"):
-            cd_min = 10  # Volvemos a 10 min por SL a pedido del usuario
+            cd_min = 10
         else:
             cd_min = 5
         state.setdefault("cooldowns", {})[symbol] = (datetime.now() + timedelta(minutes=cd_min)).isoformat()
