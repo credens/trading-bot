@@ -48,7 +48,7 @@ TOTAL_CAPITAL    = float(os.getenv("ALTCOIN_CAPITAL",   "200"))
 DRY_RUN          = os.getenv("DRY_RUN", "true").lower() == "true"
 INTERVAL_MINUTES = int(os.getenv("ALTCOIN_INTERVAL",   "3"))
 MIN_VOLUME_USDT  = float(os.getenv("ALTCOIN_MIN_VOLUME","300000000"))
-TOP_N            = int(os.getenv("ALTCOIN_TOP_N",       "20"))
+TOP_N            = int(os.getenv("ALTCOIN_TOP_N",       "30"))
 CANDLE_INTERVAL  = os.getenv("ALTCOIN_CANDLE", "5m")
 DEFAULT_SL_PCT   = float(os.getenv("ALTCOIN_SL",  "0.012"))     # SL fallback 1.2%
 DEFAULT_TP_PCT   = float(os.getenv("ALTCOIN_TP",  "0.040"))     # TP fallback 4.0%
@@ -253,13 +253,13 @@ def analyze_altcoin(indicators, market_data, capital, open_pos, open_l, open_s, 
         avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 1
         avg_loss = abs(sum(t["pnl"] for t in losses) / len(losses)) if losses else 1
         b = avg_win / avg_loss if avg_loss > 0 else 1
-        kelly = max(0.05, min(0.25, win_rate - (1 - win_rate) / b))  # clamped 5%-25%
+        kelly = max(0.08, min(0.35, win_rate - (1 - win_rate) / b))  # clamped 8%-35%
         max_position = capital * kelly
     else:
         max_position = capital / 10  # fallback
 
     size = round(max_position * (1.0 if conf == "HIGH" else 0.7), 2)
-    if size < 10: size = 10
+    if size < 15: size = 15
 
     strategy = "EMA_CROSS" if indicators["cross_bullish"] or indicators["cross_bearish"] else \
                "MEAN_REVERSION" if rsi < 30 or rsi > 70 else \
@@ -496,7 +496,7 @@ def check_positions(client, state, scenario=None):
             # ── 3. CONDICIONES DE CIERRE ──
             unrealized_pct = ((curr - entry_price)/entry_price if direction=="LONG" else (entry_price-curr)/entry_price) * lev
             hit_sl = (direction=="LONG" and curr <= sl) or (direction=="SHORT" and curr >= sl)
-            emergency = unrealized_pct < -0.07  # FIX 7: -7% (era -10%, antes -20%)
+            emergency = unrealized_pct < -0.07  # -7% del position levered = 0.35% precio
 
             entry_dt = _parse_dt(pos["entry_time"])
             minutes_open = (now - entry_dt).total_seconds() / 60

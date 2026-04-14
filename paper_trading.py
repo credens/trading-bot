@@ -202,7 +202,7 @@ def get_scalping_engine(initial_capital: float = 200.0) -> PaperTradingEngine:
 
 def _open_scalping_trade(self, decision: dict, current_price: float, capital: float, leverage: int):
     side = decision["decision"]
-    pos_pct = min(float(decision.get("position_size_pct", 0.08)), 0.10)
+    pos_pct = min(float(decision.get("position_size_pct", 0.15)), 0.25)
     sl_pct  = float(decision.get("stop_loss_pct", 0.004))
     tp_pct  = float(decision.get("take_profit_pct", 0.008))
     size    = round(capital * pos_pct, 2)
