@@ -329,9 +329,27 @@ function BotStatus({ data, isScalping = false }) {
   return <span style={{ background:"rgba(0,204,102,0.08)", border:"1px solid #00cc6633", color:"#00cc66", borderRadius:6, padding:"3px 8px", fontSize:10, fontFamily:"monospace" }}>● ACTIVO</span>;
 }
 
+// ─── Modal "Ver más" ──────────────────────────────────────────────────────────
+function VerMasModal({ title, onClose, children }) {
+  return (
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", zIndex:1000, display:"flex", alignItems:"center", justifyContent:"center" }} onClick={onClose}>
+      <div style={{ background:"#0e0e14", border:"1px solid rgba(255,255,255,0.1)", borderRadius:10, width:"min(92vw,720px)", maxHeight:"82vh", display:"flex", flexDirection:"column", padding:"20px 24px" }} onClick={e=>e.stopPropagation()}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14, borderBottom:"1px solid rgba(255,255,255,0.06)", paddingBottom:12 }}>
+          <span style={{ color:"#00ff88", fontWeight:700, letterSpacing:2, fontSize:11, fontFamily:"monospace" }}>{title}</span>
+          <button onClick={onClose} style={{ background:"none", border:"none", color:"#888", cursor:"pointer", fontSize:20, lineHeight:1 }}>×</button>
+        </div>
+        <div style={{ overflowY:"auto", flex:1, paddingRight:4 }}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+const verMasBtn = { background:"none", border:"1px solid rgba(255,255,255,0.08)", color:"#666", cursor:"pointer", fontSize:10, padding:"5px 0", borderRadius:5, marginTop:8, width:"100%", letterSpacing:1, fontFamily:"monospace" };
+
 // ─── Panel Altcoins ────────────────────────────────────────────────────────────
 function AltcoinPanel({ data, liveprices, onClose }) {
   const [tab, setTab] = useState("positions");
+  const [modal, setModal] = useState(null); // "log" | "trades" | null
   const T = (id, label) => (
     <button onClick={()=>setTab(id)} style={{ background:tab===id?"rgba(255,100,200,0.1)":"transparent", border:`1px solid ${tab===id?"#ff64c855":"transparent"}`, color:tab===id?"#ff64c8":"#bbb", borderRadius:7, padding:"5px 14px", fontSize:11, cursor:"pointer", fontFamily:"monospace" }}>{label}</button>
   );
@@ -503,35 +521,50 @@ function AltcoinPanel({ data, liveprices, onClose }) {
         </div>
       )}
 
-      {tab==="trades" && (
-        <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-          {closed.length===0
-            ? <div style={{ color:"#bbb", textAlign:"center", padding:24 }}>Sin trades cerrados aún</div>
-            : [...closed].reverse().slice(0,15).map((t,i)=>(
-              <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"10px 14px" }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                  <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                    <a href={`https://www.binance.com/en/futures/${t.symbol}`} target="_blank" rel="noopener noreferrer" style={{ color:"#ff64c8", fontFamily:"monospace", minWidth:80, textDecoration:"none" }}>{t.symbol}</a>
-                    <Badge text={t.direction||t.side} color={(t.direction||t.side)==="LONG"?"#00ff88":"#ff4444"} />
-                    <Badge text={t.strategy} color={stratColor(t.strategy)} />
-                    <Badge text={t.exit_reason||"CLOSE"} color={t.exit_reason==="TAKE_PROFIT"?"#00ff88":t.exit_reason==="STOP_LOSS"?"#ff4444":"#bbb"} />
-                  </div>
-                  <div style={{ textAlign:"right" }}>
-                    <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontWeight:700 }}>{t.pnl>=0?"+":""}${t.pnl?.toFixed(2)}</span>
-                    {(t.size_usdt||t.size)>0 && <span style={{ color:"#888", fontFamily:"monospace", fontSize:11, marginLeft:8 }}>${(t.size_usdt||t.size||0).toFixed(0)}</span>}
-                  </div>
-                </div>
-                <div style={{ display:"flex", gap:14, marginTop:6, fontFamily:"monospace", fontSize:11, flexWrap:"wrap" }}>
-                  {t.entry_price>0 && <span style={{ color:"#bbb" }}>entrada <span style={{ color:"#ccc" }}>${t.entry_price>100?t.entry_price.toFixed(2):t.entry_price.toFixed(4)}</span></span>}
-                  {t.exit_price>0 && <span style={{ color:"#bbb" }}>salida <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444" }}>${t.exit_price>100?t.exit_price.toFixed(2):t.exit_price.toFixed(4)}</span></span>}
-                  {t.pnl_pct!=null && <span style={{ color:t.pnl>=0?"#00ff88aa":"#ff4444aa" }}>{t.pnl_pct>=0?"+":""}{t.pnl_pct.toFixed(1)}%</span>}
-                </div>
-                {(t.exit_time||t.entry_time) && <div style={{ color:"#888", fontSize:10, fontFamily:"monospace", marginTop:4 }}>{new Date(t.exit_time||t.entry_time).toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} — {t.entry_time ? `${((new Date(t.exit_time||t.entry_time)-new Date(t.entry_time))/60000).toFixed(0)}min` : ""}</div>}
+      {tab==="trades" && (() => {
+        const today = new Date().toISOString().slice(0,10);
+        const todayTrades = [...closed].filter(t=>(t.exit_time||t.entry_time||"").startsWith(today)).reverse();
+        const AltTradeRow = ({t,i}) => (
+          <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"10px 14px", marginBottom:6 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <a href={`https://www.binance.com/en/futures/${t.symbol}`} target="_blank" rel="noopener noreferrer" style={{ color:"#ff64c8", fontFamily:"monospace", minWidth:80, textDecoration:"none" }}>{t.symbol}</a>
+                <Badge text={t.direction||t.side} color={(t.direction||t.side)==="LONG"?"#00ff88":"#ff4444"} />
+                <Badge text={t.strategy} color={stratColor(t.strategy)} />
+                <Badge text={t.exit_reason||"CLOSE"} color={t.exit_reason==="TAKE_PROFIT"?"#00ff88":t.exit_reason==="STOP_LOSS"?"#ff4444":"#bbb"} />
               </div>
-            ))
-          }
-        </div>
-      )}
+              <div style={{ textAlign:"right" }}>
+                <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontWeight:700 }}>{t.pnl>=0?"+":""}${t.pnl?.toFixed(2)}</span>
+                {(t.size_usdt||t.size)>0 && <span style={{ color:"#888", fontFamily:"monospace", fontSize:11, marginLeft:8 }}>${(t.size_usdt||t.size||0).toFixed(0)}</span>}
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:14, marginTop:6, fontFamily:"monospace", fontSize:11, flexWrap:"wrap" }}>
+              {t.entry_price>0 && <span style={{ color:"#bbb" }}>entrada <span style={{ color:"#ccc" }}>${t.entry_price>100?t.entry_price.toFixed(2):t.entry_price.toFixed(4)}</span></span>}
+              {t.exit_price>0 && <span style={{ color:"#bbb" }}>salida <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444" }}>${t.exit_price>100?t.exit_price.toFixed(2):t.exit_price.toFixed(4)}</span></span>}
+              {t.pnl_pct!=null && <span style={{ color:t.pnl>=0?"#00ff88aa":"#ff4444aa" }}>{t.pnl_pct>=0?"+":""}{t.pnl_pct.toFixed(1)}%</span>}
+            </div>
+            {(t.exit_time||t.entry_time) && <div style={{ color:"#888", fontSize:10, fontFamily:"monospace", marginTop:4 }}>{new Date(t.exit_time||t.entry_time).toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})} — {t.entry_time ? `${((new Date(t.exit_time||t.entry_time)-new Date(t.entry_time))/60000).toFixed(0)}min` : ""}</div>}
+          </div>
+        );
+        return (
+          <div style={{ display:"flex", flexDirection:"column" }}>
+            {todayTrades.length===0
+              ? <div style={{ color:"#bbb", textAlign:"center", padding:24 }}>Sin trades hoy</div>
+              : todayTrades.slice(0,15).map((t,i)=><AltTradeRow key={i} t={t} i={i}/>)
+            }
+            {todayTrades.length>15 && (
+              <button style={verMasBtn} onClick={()=>setModal("trades")}>
+                Ver más... ({todayTrades.length} trades hoy)
+              </button>
+            )}
+            {modal==="trades" && (
+              <VerMasModal title={`ALTCOIN — TRADES HOY (${todayTrades.length})`} onClose={()=>setModal(null)}>
+                {todayTrades.map((t,i)=><AltTradeRow key={i} t={t} i={i}/>)}
+              </VerMasModal>
+            )}
+          </div>
+        );
+      })()}
 
       {tab==="stats" && (
         <div style={{ display:"grid", gridTemplateColumns:"repeat(4, 1fr)", gap:10 }}>
@@ -553,22 +586,41 @@ function AltcoinPanel({ data, liveprices, onClose }) {
         </div>
       )}
 
-      {tab==="log" && (
-        <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:8, padding:14, fontFamily:"monospace", fontSize:11 }}>
-          {(data.cycle_log||[]).slice(0,15).map((e,i)=>(
-            <div key={i} style={{ display:"flex", gap:10, marginBottom:5 }}>
-              <span style={{ color:"#bbb", minWidth:50 }}>{e.time}</span>
-              <span style={{ color:e.msg?.includes("✓")?"#00ff88":e.msg?.includes("❌")?"#ff4444":"#bbb" }}>{e.msg}</span>
+      {tab==="log" && (() => {
+        const log = data.cycle_log||[];
+        const LogRow = ({e,i}) => (
+          <div key={i} style={{ display:"flex", gap:10, marginBottom:5 }}>
+            <span style={{ color:"#bbb", minWidth:50 }}>{e.time}</span>
+            <span style={{ color:e.msg?.includes("✓")?"#00ff88":e.msg?.includes("❌")?"#ff4444":"#bbb" }}>{e.msg}</span>
+          </div>
+        );
+        return (
+          <div>
+            <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:8, padding:14, fontFamily:"monospace", fontSize:11 }}>
+              {log.slice(0,15).map((e,i)=><LogRow key={i} e={e} i={i}/>)}
             </div>
-          ))}
-        </div>
-      )}
+            {log.length>15 && (
+              <button style={verMasBtn} onClick={()=>setModal("log")}>
+                Ver más... ({log.length} entradas)
+              </button>
+            )}
+            {modal==="log" && (
+              <VerMasModal title={`ALTCOIN — LOG HOY (${log.length})`} onClose={()=>setModal(null)}>
+                <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:8, padding:14, fontFamily:"monospace", fontSize:11 }}>
+                  {log.map((e,i)=><LogRow key={i} e={e} i={i}/>)}
+                </div>
+              </VerMasModal>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
 // ─── Panel Scalping ───────────────────────────────────────────────────────────
 function ScalpingPanel({ data, liveprices, onClose }) {
   const [tab, setTab] = useState("position");
+  const [modal, setModal] = useState(null); // "log" | "trades" | null
   const [btcScan, setBtcScan] = useState(null);
   const ACC = "#ff9933";
   const T = (id, label) => (
@@ -728,29 +780,46 @@ function ScalpingPanel({ data, liveprices, onClose }) {
         </div>
       )}
 
-      {tab==="trades" && (
-        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-          {closed.length === 0
-            ? <div style={{ color:"#bbb", textAlign:"center", padding:24 }}>Sin trades cerrados aún</div>
-            : [...closed].reverse().slice(0, 20).map((t, i) => (
-              <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"10px 14px" }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
-                  <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
-                    <Badge text={t.side} color={t.side==="LONG"?"#00ff88":"#ff4444"} />
-                    <Badge text={t.exit_reason||"--"} color={t.exit_reason==="TAKE_PROFIT"?"#00ff88":t.exit_reason==="STOP_LOSS"?"#ff4444":"#bbb"} />
-                    <span style={{ color:"#bbb", fontSize:11 }}>${t.entry_price?.toLocaleString()} → ${t.exit_price?.toLocaleString()}</span>
-                  </div>
-                  <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontWeight:700 }}>{t.pnl>=0?"+":""}${t.pnl?.toFixed(2)}</span>
-                </div>
-                <div style={{ display:"flex", gap:12, fontSize:10, color:"#888", fontFamily:"monospace" }}>
-                  {(t.exit_time||t.entry_time) && <span>{(t.exit_time||t.entry_time).slice(0,16).replace("T"," ")}</span>}
-                  {t.size && <span>size <span style={{ color:ACC }}>${t.size?.toFixed(2)}</span></span>}
-                </div>
+      {tab==="trades" && (()=>{
+        const today = new Date().toISOString().slice(0,10);
+        const todayTrades = [...closed].filter(t=>(t.exit_time||t.entry_time||"").startsWith(today)).reverse();
+        const ScTradeRow = ({t,i}) => (
+          <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"10px 14px" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:4 }}>
+              <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                <Badge text={t.side} color={t.side==="LONG"?"#00ff88":"#ff4444"} />
+                <Badge text={t.exit_reason||"--"} color={t.exit_reason==="TAKE_PROFIT"?"#00ff88":t.exit_reason==="STOP_LOSS"?"#ff4444":"#bbb"} />
+                <span style={{ color:"#bbb", fontSize:11 }}>${t.entry_price?.toLocaleString()} → ${t.exit_price?.toLocaleString()}</span>
               </div>
-            ))
-          }
-        </div>
-      )}
+              <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontWeight:700 }}>{t.pnl>=0?"+":""}${t.pnl?.toFixed(2)}</span>
+            </div>
+            <div style={{ display:"flex", gap:12, fontSize:10, color:"#888", fontFamily:"monospace" }}>
+              {(t.exit_time||t.entry_time) && <span>{(t.exit_time||t.entry_time).slice(0,16).replace("T"," ")}</span>}
+              {t.size && <span>size <span style={{ color:ACC }}>${t.size?.toFixed(2)}</span></span>}
+            </div>
+          </div>
+        );
+        return (
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {todayTrades.length === 0
+              ? <div style={{ color:"#bbb", textAlign:"center", padding:24 }}>Sin trades hoy</div>
+              : todayTrades.slice(0,15).map((t,i)=><ScTradeRow key={i} t={t} i={i}/>)
+            }
+            {todayTrades.length > 15 && (
+              <button style={verMasBtn} onClick={()=>setModal("trades")}>
+                Ver más... ({todayTrades.length} trades hoy)
+              </button>
+            )}
+            {modal==="trades" && (
+              <VerMasModal title={`SCALPING — TRADES HOY (${todayTrades.length})`} onClose={()=>setModal(null)}>
+                <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                  {todayTrades.map((t,i)=><ScTradeRow key={i} t={t} i={i}/>)}
+                </div>
+              </VerMasModal>
+            )}
+          </div>
+        );
+      })()}
 
       {tab==="stats" && (
         <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
@@ -770,16 +839,34 @@ function ScalpingPanel({ data, liveprices, onClose }) {
         </div>
       )}
 
-      {tab==="log" && (
-        <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:8, padding:14, fontFamily:"monospace", fontSize:11 }}>
-          {(data.cycle_log||[]).slice(0, 20).map((e, i) => (
-            <div key={i} style={{ display:"flex", gap:10, marginBottom:5 }}>
-              <span style={{ color:"#bbb", minWidth:50 }}>{e.time}</span>
-              <span style={{ color:e.msg?.includes("✓")?"#00ff88":e.msg?.includes("❌")?"#ff4444":e.msg?.includes("SCALP")||e.msg?.includes("SC-")?ACC:"#bbb" }}>{e.msg}</span>
+      {tab==="log" && (()=>{
+        const log = data.cycle_log||[];
+        const ScLogRow = ({e,i}) => (
+          <div key={i} style={{ display:"flex", gap:10, marginBottom:5 }}>
+            <span style={{ color:"#bbb", minWidth:50 }}>{e.time}</span>
+            <span style={{ color:e.msg?.includes("✓")?"#00ff88":e.msg?.includes("❌")?"#ff4444":e.msg?.includes("SCALP")||e.msg?.includes("SC-")?ACC:"#bbb" }}>{e.msg}</span>
+          </div>
+        );
+        return (
+          <div>
+            <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:8, padding:14, fontFamily:"monospace", fontSize:11 }}>
+              {log.slice(0,20).map((e,i)=><ScLogRow key={i} e={e} i={i}/>)}
             </div>
-          ))}
-        </div>
-      )}
+            {log.length>20 && (
+              <button style={verMasBtn} onClick={()=>setModal("log")}>
+                Ver más... ({log.length} entradas)
+              </button>
+            )}
+            {modal==="log" && (
+              <VerMasModal title={`SCALPING — LOG HOY (${log.length})`} onClose={()=>setModal(null)}>
+                <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:8, padding:14, fontFamily:"monospace", fontSize:11 }}>
+                  {log.map((e,i)=><ScLogRow key={i} e={e} i={i}/>)}
+                </div>
+              </VerMasModal>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }
