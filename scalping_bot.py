@@ -346,20 +346,20 @@ def analyze(ind: dict, current_position: str, scenario=None) -> dict:
 
         log.info(f"  [TREND ADX:{ind['adx']:.0f}] L:{long_score} S:{short_score} | EMA:{ind['ema_trend']} RSI:{rsi:.0f} CVD:{'↑' if ind['cvd_bullish'] else '↓'} Vol:{vol:.1f}x")
 
-        if long_score >= 2 and long_score > short_score:
+        if long_score >= 4 and long_score > short_score:
             # CVD diverge fuerte: BLOQUEAR trade
             if ind["cvd_divergence"] and not ind["cvd_bullish"]:
                 log.info(f"  ⛔ LONG bloqueado por CVD divergencia")
                 return make("FLAT", "MEDIUM", "CVD diverge contra LONG", ["CVD bloqueó señal"])
-            conf = "HIGH" if long_score >= 4 else "MEDIUM"
+            conf = "HIGH" if long_score >= 5 else "MEDIUM"
             return make("LONG", conf, f"TREND LONG score:{long_score} | {' | '.join(long_sigs[:3])}", long_sigs)
 
-        if short_score >= 2 and short_score > long_score:
+        if short_score >= 4 and short_score > long_score:
             # CVD diverge fuerte: BLOQUEAR trade
             if ind["cvd_divergence"] and not ind["cvd_bearish"]:
                 log.info(f"  ⛔ SHORT bloqueado por CVD divergencia")
                 return make("FLAT", "MEDIUM", "CVD diverge contra SHORT", ["CVD bloqueó señal"])
-            conf = "HIGH" if short_score >= 4 else "MEDIUM"
+            conf = "HIGH" if short_score >= 5 else "MEDIUM"
             return make("SHORT", conf, f"TREND SHORT score:{short_score} | {' | '.join(short_sigs[:3])}", short_sigs)
 
         return make("FLAT", "MEDIUM", f"TREND sin confluencia (L:{long_score} S:{short_score})", ["Esperando señal"])
@@ -415,9 +415,9 @@ def analyze(ind: dict, current_position: str, scenario=None) -> dict:
 
     log.info(f"  [MIXED ADX:{ind['adx']:.0f}] L:{long_score} S:{short_score} | BB:{bb_pct:.2f}")
 
-    if long_score >= 3 and long_score > short_score:
+    if long_score >= 4 and long_score > short_score:
         return make("LONG", "MEDIUM", f"MIXED LONG score:{long_score}", [f"ADX:{ind['adx']:.0f}", "CVD alineado"])
-    if short_score >= 3 and short_score > long_score:
+    if short_score >= 4 and short_score > long_score:
         return make("SHORT", "MEDIUM", f"MIXED SHORT score:{short_score}", [f"ADX:{ind['adx']:.0f}", "CVD alineado"])
 
     return make("FLAT", "MEDIUM", f"MIXED — esperando definición (ADX:{ind['adx']:.0f})", ["Transición de régimen"])
