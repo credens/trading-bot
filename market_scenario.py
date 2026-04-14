@@ -127,14 +127,14 @@ def _trend_strong(direction, macro_gap, rsi_1h, atr_pct, adx):
         # Scalping
         "sc_regimes": ["TREND", "BREAKOUT"],              # sin RANGE
         "sc_tp_mult": 1.3,
-        "sc_size_with": 0.10,
-        "sc_size_against": 0.04,                          # reducido (antes 0 = bloqueado)
+        "sc_size_with": 0.22,
+        "sc_size_against": 0.06,
         "sc_min_hold_sec": 600,                           # 10 min
         # Altcoins
         "alt_strategies": ["RANGE", "MOMENTUM"],          # sin MEAN_REVERSION
         "alt_tp_mult": 1.5,
         "alt_trailing_trigger": 0.008,                    # 0.8% (más generoso)
-        "alt_size_mult": 1.0,
+        "alt_size_mult": 1.2,
         "alt_block_counter": False,                       # permitir contra con score alto
         # Test Bot (aggressive scalper 30s)
         "tb_strategies": ["MOM_BURST", "EMA_CVD", "BB_REV"],
@@ -160,13 +160,13 @@ def _trend_moderate(direction, macro_gap, rsi_1h, atr_pct, adx):
         "bn_vote_threshold_against": 3,                    # necesita unanimidad
         "sc_regimes": ["TREND", "BREAKOUT", "MIXED"],     # sin RANGE
         "sc_tp_mult": 1.1,
-        "sc_size_with": 0.10,
-        "sc_size_against": 0.05,
+        "sc_size_with": 0.18,
+        "sc_size_against": 0.07,
         "sc_min_hold_sec": 300,                            # 5 min
         "alt_strategies": ["RANGE", "MOMENTUM"],
         "alt_tp_mult": 1.2,
         "alt_trailing_trigger": 0.007,                     # 0.7%
-        "alt_size_mult": 0.8,
+        "alt_size_mult": 1.0,
         "alt_block_counter": True,
         # Test Bot (aggressive scalper 30s)
         "tb_strategies": ["MOM_BURST", "EMA_CVD", "BB_REV"],
