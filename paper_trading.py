@@ -42,6 +42,7 @@ class Trade:
     confidence: str = ""
     leverage: int = 1
     best_price: Optional[float] = None
+    entry_adx: Optional[float] = None   # ADX al momento de entrada (para detectar degradación)
 
 
 @dataclass
@@ -219,6 +220,7 @@ def _open_scalping_trade(self, decision: dict, current_price: float, capital: fl
         reasoning=decision.get("reasoning", ""),
         confidence=decision.get("confidence", ""),
         leverage=leverage,
+        entry_adx=decision.get("entry_adx"),
     )
     self.state.open_trades.append(trade)
     self.state.current_capital -= size

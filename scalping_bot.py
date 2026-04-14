@@ -456,8 +456,8 @@ def update_trailing_stop(open_trade, price: float, atr: float = 0) -> Optional[f
     best = open_trade.best_price
     profit_pct = (best - entry) / entry if side == "LONG" else (entry - best) / entry
 
-    # ── No mover si profit < 0.6% (dejar respirar el trade) ─────
-    if profit_pct < 0.006:
+    # ── No mover si profit < 0.4% (dejar respirar el trade) ─────
+    if profit_pct < 0.004:
         return None
 
     # ── Distancia dinámica basada en ATR + profit ────────────────
@@ -609,17 +609,35 @@ def run_cycle(client, paper):
                 # En profit → NO cerrar por SIGNAL, dejar que trailing stop haga su trabajo
                 paper.add_log(f"HOLD — en profit, trailing stop decide salida")
             else:
-                # FIX 3: Requrir confluencia para SIGNAL exit
-                # EMA cross + MACD + CVD deben estar TODOS contra posición
+                # FIX 3: Confluencia para SIGNAL exit
+                # Requiere 3/3 señales en condiciones normales.
+                # Si el ADX cayó ≥30% desde la entrada (tendencia debilitándose), basta con 2/3.
+                entry_adx = getattr(open_trade, "entry_adx", None)
+                regime_degraded = (
+                    entry_adx is not None and ind["adx"] < entry_adx * 0.70
+                )
+                required_signals = 2 if regime_degraded else 3
+
                 should_close = False
                 if open_trade.side == "LONG":
-                    # Para cerrar LONG: bearish total
-                    if ind["ema_trend"] == "bearish" and ind["macd_hist"] < 0 and ind["cvd_slope"] < 0:
+                    bearish_count = sum([
+                        ind["ema_trend"] == "bearish",
+                        ind["macd_hist"] < 0,
+                        ind["cvd_slope"] < 0,
+                    ])
+                    if bearish_count >= required_signals:
                         should_close = True
                 else:
-                    # Para cerrar SHORT: bullish total
-                    if ind["ema_trend"] == "bullish" and ind["macd_hist"] > 0 and ind["cvd_slope"] > 0:
+                    bullish_count = sum([
+                        ind["ema_trend"] == "bullish",
+                        ind["macd_hist"] > 0,
+                        ind["cvd_slope"] > 0,
+                    ])
+                    if bullish_count >= required_signals:
                         should_close = True
+
+                if regime_degraded and should_close:
+                    log.info(f"  ⚡ Exit anticipado — régimen degradado (ADX entry:{entry_adx:.0f} → ahora:{ind['adx']:.0f})")
                 
                 if should_close:
                     paper.close_scalping_position(price, "SIGNAL")
@@ -703,6 +721,7 @@ def run_cycle(client, paper):
                 paper.close_scalping_position(price, "SIGNAL")
                 paper.state.last_signal_exit = datetime.now().isoformat()
             if not paper.get_scalping_position():
+                decision["entry_adx"] = ind["adx"]
                 paper.open_scalping_trade(decision, price, capital, LEVERAGE)
 
     paper.save()

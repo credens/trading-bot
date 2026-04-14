@@ -68,7 +68,13 @@ EXCLUDE = {"BUSDUSDT", "USDCUSDT", "TUSDUSDT", "USDTUSDT", "BTCUSDT",
            "BTCDOMUSDT", "DEFIUSDT", "BNXUSDT", "1000SHIBUSDT",
            "SIRENUSDT", "LOOMUSDT", "CVPUSDT", "BALUSDT",
            "1000LUNCUSDT", "LUNA2USDT", "ONTUSDT", "RIVERUSDT",
-           "HYPEUSDT", "XAGUSDT", "XAUUSDT", "PAXGUSDT", "1000PEPEUSDT"}
+           "HYPEUSDT", "XAGUSDT", "XAUUSDT", "PAXGUSDT", "1000PEPEUSDT",
+           # Tokens con pump/dump extremo — emergency exits repetidos
+           "BLESSUSDT",   # -33% en 2 min, 14/04
+           "RAVEUSDT",    # -34% en 1 min, múltiples días
+           "币安人生USDT", # token chino sospechoso, emergencias repetidas
+           "ARIAUSDT",    # emergencias casi siempre, win rate muy bajo
+           }
 
 # ─── PID Lock ────────────────────────────────────────────────────────────────
 
