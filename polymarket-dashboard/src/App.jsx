@@ -552,7 +552,7 @@ function AltcoinPanel({ data, liveprices, onClose }) {
               ? <div style={{ color:"#bbb", textAlign:"center", padding:24 }}>Sin trades hoy</div>
               : todayTrades.slice(0,15).map((t,i)=><AltTradeRow key={i} t={t} i={i}/>)
             }
-            {todayTrades.length>15 && (
+            {todayTrades.length>0 && (
               <button style={verMasBtn} onClick={()=>setModal("trades")}>
                 Ver más... ({todayTrades.length} trades hoy)
               </button>
@@ -599,7 +599,7 @@ function AltcoinPanel({ data, liveprices, onClose }) {
             <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:8, padding:14, fontFamily:"monospace", fontSize:11 }}>
               {log.slice(0,15).map((e,i)=><LogRow key={i} e={e} i={i}/>)}
             </div>
-            {log.length>15 && (
+            {log.length>0 && (
               <button style={verMasBtn} onClick={()=>setModal("log")}>
                 Ver más... ({log.length} entradas)
               </button>
@@ -805,7 +805,7 @@ function ScalpingPanel({ data, liveprices, onClose }) {
               ? <div style={{ color:"#bbb", textAlign:"center", padding:24 }}>Sin trades hoy</div>
               : todayTrades.slice(0,15).map((t,i)=><ScTradeRow key={i} t={t} i={i}/>)
             }
-            {todayTrades.length > 15 && (
+            {todayTrades.length > 0 && (
               <button style={verMasBtn} onClick={()=>setModal("trades")}>
                 Ver más... ({todayTrades.length} trades hoy)
               </button>
@@ -852,7 +852,7 @@ function ScalpingPanel({ data, liveprices, onClose }) {
             <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:8, padding:14, fontFamily:"monospace", fontSize:11 }}>
               {log.slice(0,20).map((e,i)=><ScLogRow key={i} e={e} i={i}/>)}
             </div>
-            {log.length>20 && (
+            {log.length>0 && (
               <button style={verMasBtn} onClick={()=>setModal("log")}>
                 Ver más... ({log.length} entradas)
               </button>
