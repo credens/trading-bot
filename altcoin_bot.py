@@ -530,28 +530,6 @@ def run_cycle(client):
     
     state = load_state()
     now_utc = datetime.now(timezone.utc)
-    PEAK_HOURS_UTC = list(range(9, 21))  # 09:00-21:00 UTC
-
-    next_check = None
-    if state.get("next_liquidity_check"):
-        try:
-            next_check = datetime.fromisoformat(state["next_liquidity_check"])
-        except Exception:
-            next_check = None
-
-    if now_utc.hour not in PEAK_HOURS_UTC:
-        if next_check and now_utc < next_check:
-            remaining = int((next_check - now_utc).total_seconds() / 60)
-            log.warning(f"  ⏸ Baja liquidez ({now_utc.hour:02d}:00 UTC) — próxima verificación en {remaining}m")
-            add_log(state, f"⏸ Baja liquidez, next check in {remaining}m")
-            save_state(state)
-            return
-
-        state["next_liquidity_check"] = (now_utc + timedelta(minutes=30)).isoformat()
-        log.warning(f"  ⏸ Baja liquidez ({now_utc.hour:02d}:00 UTC) — próxima verificación en 30m")
-        add_log(state, "⏸ Baja liquidez, siguiente chequeo en 30m")
-        save_state(state)
-        return
 
     if state.get("next_liquidity_check"):
         state["next_liquidity_check"] = None

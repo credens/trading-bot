@@ -486,29 +486,7 @@ def update_trailing_stop(open_trade, price: float, atr: float = 0) -> Optional[f
 def run_cycle(client, paper):
     log.info(f"── CICLO {datetime.now().strftime('%H:%M:%S')} ──────────────────────────")
 
-    # 0. MEJORA 5: Hour Filter — liquidity recheck cada 30 min fuera de peak hours
     now = datetime.now(timezone.utc)
-    PEAK_HOURS_UTC = list(range(9, 21))  # 09:00-21:00 UTC (peak liquidity)
-
-    next_check = None
-    if paper.state.next_liquidity_check:
-        try:
-            next_check = datetime.fromisoformat(paper.state.next_liquidity_check)
-        except Exception:
-            next_check = None
-
-    if now.hour not in PEAK_HOURS_UTC:
-        if next_check and now < next_check:
-            remaining = int((next_check - now).total_seconds() / 60)
-            log.warning(f"  ⏸ Fuera de peak hours ({now.hour:02d}:00 UTC) — próxima verificación en {remaining}m")
-            paper.add_log(f"⏸ Peak hours (09:00-21:00 UTC), next check in {remaining}m")
-            return
-
-        paper.state.next_liquidity_check = (now + timedelta(minutes=30)).isoformat()
-        log.warning(f"  ⏸ Fuera de peak hours ({now.hour:02d}:00 UTC) — próxima verificación en 30m")
-        paper.add_log("⏸ Peak hours (09:00-21:00 UTC), next liquidity check in 30m")
-        paper.save()
-        return
 
     if paper.state.next_liquidity_check:
         paper.state.next_liquidity_check = None
