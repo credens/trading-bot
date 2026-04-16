@@ -362,7 +362,10 @@ def monitor_positions(client, state):
         close_position(state, symbol, price, reason)
 
 # ── Ciclo Principal ────────────────────────────────────────────────────────────
-def run_cycle(client, state):
+def run_cycle(client):
+    # Leer estado desde disco cada ciclo (igual que altcoin_bot)
+    state = load_state()
+
     now_local = datetime.now()
     cap = state.get("current_capital", CAPITAL)
     n_pos = len(state.get("positions", {}))
@@ -378,22 +381,17 @@ def run_cycle(client, state):
         save_state(state)
         return
 
-    # 0. Detectar cierres manuales desde el dashboard
-    # Si una posición está en memoria pero fue borrada del archivo en disco → cerrar
-    try:
-        disk = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
-        disk_pos = set(disk.get("positions", {}).keys())
-        mem_pos  = set(state["positions"].keys())
-        for sym in mem_pos - disk_pos:
-            log.info(f"  🖐 Cierre manual detectado: {sym}")
+    # 0. Cierres manuales: el dashboard escribe manual_close:[sym] en el estado
+    for sym in list(state.get("manual_close", [])):
+        if sym in state["positions"]:
+            log.info(f"  🖐 Cierre manual: {sym}")
             try:
                 ticker = client.futures_symbol_ticker(symbol=sym)
                 price  = float(ticker["price"])
             except Exception:
                 price  = state["positions"][sym].get("entry_price", 0)
             close_position(state, sym, price, "MANUAL")
-    except Exception as e:
-        log.warning(f"  check manual close error: {e}")
+    state["manual_close"] = []
 
     # 1. Monitorear posiciones abiertas primero
     if state["positions"]:
@@ -473,13 +471,13 @@ def main():
         os.getenv("BINANCE_SECRET_KEY"),
     )
 
-    state = load_state()
-    log.info(f"🚀 AltScalp Bot | Capital: ${state['current_capital']:.2f} | Ciclo: {CYCLE_SEC}s | Max pos: {MAX_POSITIONS}")
+    init = load_state()
+    log.info(f"🚀 AltScalp Bot | Capital: ${init['current_capital']:.2f} | Ciclo: {CYCLE_SEC}s | Max pos: {MAX_POSITIONS}")
     log.info(f"   TP: {TP_PCT*100:.2f}% | SL: {SL_PCT*100:.2f}% | Time: {TIME_LIMIT_S}s | Score≥{SCORE_THRESHOLD}")
 
     while True:
         try:
-            run_cycle(client, state)
+            run_cycle(client)
         except Exception as e:
             log.error(f"Error ciclo: {e}", exc_info=True)
         time.sleep(CYCLE_SEC)

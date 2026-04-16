@@ -1294,7 +1294,7 @@ export default function Dashboard() {
         cycle_log: [{ time: new Date().toLocaleTimeString("es-AR"),
           msg: `🛑 MANUAL ${symbol} @ $${exitPrice.toFixed(4)} | P&L ${pnl>=0?"+":""}$${pnl.toFixed(2)}` },
           ...(state.cycle_log||[]).slice(0,49)],
-        manual_close: [symbol],
+        manual_close: [...(state.manual_close||[]), symbol],
         last_updated: new Date().toISOString(),
       };
 
