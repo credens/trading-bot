@@ -378,6 +378,23 @@ def run_cycle(client, state):
         save_state(state)
         return
 
+    # 0. Detectar cierres manuales desde el dashboard
+    # Si una posición está en memoria pero fue borrada del archivo en disco → cerrar
+    try:
+        disk = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
+        disk_pos = set(disk.get("positions", {}).keys())
+        mem_pos  = set(state["positions"].keys())
+        for sym in mem_pos - disk_pos:
+            log.info(f"  🖐 Cierre manual detectado: {sym}")
+            try:
+                ticker = client.futures_symbol_ticker(symbol=sym)
+                price  = float(ticker["price"])
+            except Exception:
+                price  = state["positions"][sym].get("entry_price", 0)
+            close_position(state, sym, price, "MANUAL")
+    except Exception as e:
+        log.warning(f"  check manual close error: {e}")
+
     # 1. Monitorear posiciones abiertas primero
     if state["positions"]:
         monitor_positions(client, state)
