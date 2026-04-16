@@ -624,7 +624,7 @@ function AltcoinPanel({ data, liveprices, onClose }) {
   );
 }
 // ─── Panel AltScalp (HFT Altcoins) ───────────────────────────────────────────
-function AltScalpPanel({ data, onClose }) {
+function AltScalpPanel({ data, liveprices, onClose }) {
   const [tab, setTab] = useState("positions");
   const [modal, setModal] = useState(null);
   const ACC = "#00ccff";
@@ -672,43 +672,44 @@ function AltScalpPanel({ data, onClose }) {
 
       {/* POSICIONES */}
       {tab==="positions" && (
-        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+        <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
           {positions.length===0
-            ? <div style={{ color:"#ccc", textAlign:"center", padding:24 }}>Sin posiciones abiertas — escaneando mercado</div>
+            ? <div style={{ color:"#ccc", textAlign:"center", padding:32 }}>Sin posiciones abiertas — escaneando mercado</div>
             : positions.map((p,i)=>{
-              const entry = p.entry_price;
-              const best  = p.best_price || entry;
-              const lev   = p.leverage || 1;
-              const size  = p.size_usdt || 0;
-              const pnlPct = entry ? (p.direction==="LONG" ? (best-entry)/entry*lev : (entry-best)/entry*lev) : 0;
-              const pnlUsd = size * pnlPct;
-              const col    = pnlUsd >= 0 ? "#00ff88" : "#ff4444";
+              const entry   = p.entry_price;
+              const live    = liveprices?.[p.symbol];
+              const curPx   = live || p.best_price || entry;
+              const lev     = p.leverage || 1;
+              const size    = p.size_usdt || 0;
+              const pnlPct  = entry ? (p.direction==="LONG" ? (curPx-entry)/entry*lev : (entry-curPx)/entry*lev) : 0;
+              const pnlUsd  = size * pnlPct;
+              const col     = pnlUsd >= 0 ? "#00ff88" : "#ff4444";
               return (
-                <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.06)", borderRadius:10, padding:"14px 18px" }}>
+                <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:12, padding:"18px 22px" }}>
                   {/* Row 1: symbol+badges left, size+price+CERRAR right */}
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6 }}>
-                    <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
+                    <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
                       <a href={`https://www.binance.com/en/futures/${p.symbol}`} target="_blank" rel="noopener noreferrer"
-                        style={{ color:ACC, fontWeight:700, fontFamily:"monospace", fontSize:14, textDecoration:"none" }}>{p.symbol}</a>
+                        style={{ color:ACC, fontWeight:700, fontFamily:"monospace", fontSize:16, textDecoration:"none" }}>{p.symbol}</a>
                       <Badge2 text={p.direction} color={p.direction==="LONG"?"#00ff88":"#ff4444"} />
                       <Badge2 text={`${lev}x`} color={ACC} />
                     </div>
-                    <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6 }}>
-                      <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-                        <span style={{ color:"#ffb800", fontFamily:"monospace", fontWeight:700 }}>${size.toFixed(0)}</span>
-                        {best && <span style={{ color:"#bbb", fontFamily:"monospace", fontSize:11 }}>${best.toFixed(4)}</span>}
+                    <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:8 }}>
+                      <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+                        <span style={{ color:"#ffb800", fontFamily:"monospace", fontWeight:700, fontSize:15 }}>${size.toFixed(0)}</span>
+                        {curPx && <span style={{ color:"#bbb", fontFamily:"monospace", fontSize:12 }}>${curPx.toFixed(4)}</span>}
                         {onClose && (
-                          <button onClick={()=>onClose(p)} style={{ background:"rgba(255,68,68,0.25)", border:"1px solid #ff4444aa", color:"#fff", borderRadius:6, padding:"5px 12px", fontSize:11, cursor:"pointer", fontFamily:"monospace", fontWeight:700, letterSpacing:1 }}>
+                          <button onClick={()=>onClose(p)} style={{ background:"rgba(255,68,68,0.3)", border:"1px solid #ff4444bb", color:"#fff", borderRadius:6, padding:"6px 14px", fontSize:12, cursor:"pointer", fontFamily:"monospace", fontWeight:700, letterSpacing:1 }}>
                             CERRAR
                           </button>
                         )}
                       </div>
                       {entry && (
                         <div style={{ textAlign:"right" }}>
-                          <div style={{ color:col, fontWeight:700, fontSize:18, fontFamily:"monospace" }}>
+                          <div style={{ color:col, fontWeight:700, fontSize:22, fontFamily:"monospace", lineHeight:1 }}>
                             {pnlUsd >= 0 ? "+" : ""}{pnlUsd.toFixed(2)}$
                           </div>
-                          <div style={{ color:col+"bb", fontWeight:700, fontSize:12, fontFamily:"monospace" }}>
+                          <div style={{ color:col+"bb", fontWeight:700, fontSize:13, fontFamily:"monospace", marginTop:2 }}>
                             {pnlPct >= 0 ? "+" : ""}{(pnlPct*100).toFixed(2)}%
                           </div>
                         </div>
@@ -717,12 +718,12 @@ function AltScalpPanel({ data, onClose }) {
                   </div>
                   {/* Row 2: score text */}
                   {p.score != null && (
-                    <div style={{ color:"#888", fontFamily:"monospace", fontSize:11, marginBottom:4 }}>
+                    <div style={{ color:"#888", fontFamily:"monospace", fontSize:12, marginBottom:6 }}>
                       Score {p.score >= 0 ? "+" : ""}{p.score}
                     </div>
                   )}
                   {/* Row 3: entrada / SL / TP / hora */}
-                  <div style={{ display:"flex", gap:16, fontFamily:"monospace", fontSize:11, flexWrap:"wrap" }}>
+                  <div style={{ display:"flex", gap:18, fontFamily:"monospace", fontSize:12, flexWrap:"wrap" }}>
                     <span style={{ color:"#bbb" }}>entrada <span style={{ color:"#ccc" }}>${entry?.toFixed(4)}</span></span>
                     <span style={{ color:"#bbb" }}>SL <span style={{ color:"#ff4444" }}>${p.stop_loss?.toFixed(4)}</span></span>
                     <span style={{ color:"#bbb" }}>TP <span style={{ color:"#00ff88" }}>${p.take_profit?.toFixed(4)}</span></span>
@@ -1195,7 +1196,8 @@ export default function Dashboard() {
   }, [lastManualClose, manuallyClosed]);
 
   const fetchLivePrices = useCallback(async () => {
-    const symbols = ["BTCUSDT", ...(altData.open_positions||[]).map(p=>p.symbol).filter(Boolean)];
+    const altScalpSyms = Object.values(asData.positions||{}).map(p=>p.symbol).filter(Boolean);
+    const symbols = ["BTCUSDT", ...(altData.open_positions||[]).map(p=>p.symbol).filter(Boolean), ...altScalpSyms];
     try {
       const prices = {};
       await Promise.all(symbols.map(async sym => {
@@ -1207,7 +1209,7 @@ export default function Dashboard() {
       }));
       if (Object.keys(prices).length > 0) setLivePrices(prev => ({...prev, ...prices}));
     } catch {}
-  }, [altData.open_positions]);
+  }, [altData.open_positions, asData.positions]);
 
   useEffect(() => {
     const t1 = setInterval(()=>setBlink(b=>!b), 800);
@@ -1411,7 +1413,7 @@ export default function Dashboard() {
       </div>
       {/* Bottom row: AltScalp HFT */}
       <div style={{ padding:"20px 28px 0" }}>
-        <AltScalpPanel data={asData} onClose={(pos)=>{
+        <AltScalpPanel data={asData} liveprices={liveprices} onClose={(pos)=>{
           if(!confirm(`¿Cerrar ${pos.symbol}?`)) return;
           fetch("http://localhost:8082/state/altscalp").then(r=>r.json()).then(s=>{
             if(s.positions?.[pos.symbol]) delete s.positions[pos.symbol];
