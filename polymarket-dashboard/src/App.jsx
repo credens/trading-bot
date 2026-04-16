@@ -675,55 +675,62 @@ function AltScalpPanel({ data, onClose }) {
         <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
           {positions.length===0
             ? <div style={{ color:"#ccc", textAlign:"center", padding:24 }}>Sin posiciones abiertas — escaneando mercado</div>
-            : positions.map((p,i)=>(
-              <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(0,204,255,0.15)", borderRadius:10, padding:"12px 16px" }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-                  <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                    <a href={`https://www.binance.com/en/futures/${p.symbol}`} target="_blank" rel="noopener noreferrer" style={{ color:ACC, fontWeight:700, fontFamily:"monospace", textDecoration:"none" }}>{p.symbol}</a>
-                    <Badge2 text={p.direction} color={p.direction==="LONG"?"#00ff88":"#ff4444"} />
-                    <Badge2 text={`${p.leverage}x`} color={ACC} />
-                    <Badge2 text={`sc:${p.score}`} color="#ffcc00" />
-                  </div>
-                  <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
-                    <div style={{ display:"flex", gap:10, alignItems:"center" }}>
-                      <span style={{ color:"#ffb800", fontFamily:"monospace" }}>${(p.size_usdt||0).toFixed(0)}</span>
-                      {onClose && (
-                        <button onClick={()=>onClose(p)} style={{ background:"rgba(255,68,68,0.15)", border:"1px solid #ff444455", color:"#ff6666", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer", fontFamily:"monospace" }}>
-                          CERRAR
-                        </button>
-                      )}
+            : positions.map((p,i)=>{
+              const entry = p.entry_price;
+              const best  = p.best_price || entry;
+              const lev   = p.leverage || 1;
+              const size  = p.size_usdt || 0;
+              const pnlPct = entry ? (p.direction==="LONG" ? (best-entry)/entry*lev : (entry-best)/entry*lev) : 0;
+              const pnlUsd = size * pnlPct;
+              const col    = pnlUsd >= 0 ? "#00ff88" : "#ff4444";
+              return (
+                <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.06)", borderRadius:10, padding:"14px 18px" }}>
+                  {/* Row 1: symbol+badges left, size+price+CERRAR right */}
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6 }}>
+                    <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
+                      <a href={`https://www.binance.com/en/futures/${p.symbol}`} target="_blank" rel="noopener noreferrer"
+                        style={{ color:ACC, fontWeight:700, fontFamily:"monospace", fontSize:14, textDecoration:"none" }}>{p.symbol}</a>
+                      <Badge2 text={p.direction} color={p.direction==="LONG"?"#00ff88":"#ff4444"} />
+                      <Badge2 text={`${lev}x`} color={ACC} />
                     </div>
-                    {(() => {
-                      const entry = p.entry_price;
-                      const best  = p.best_price || entry;
-                      if (!entry) return null;
-                      const lev = p.leverage || 1;
-                      const pnlPct = p.direction==="LONG"
-                        ? (best - entry) / entry * lev
-                        : (entry - best) / entry * lev;
-                      const pnlUsd = (p.size_usdt||0) * pnlPct;
-                      const col = pnlUsd >= 0 ? "#00ff88" : "#ff4444";
-                      return (
+                    <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:6 }}>
+                      <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                        <span style={{ color:"#ffb800", fontFamily:"monospace", fontWeight:700 }}>${size.toFixed(0)}</span>
+                        {best && <span style={{ color:"#bbb", fontFamily:"monospace", fontSize:11 }}>${best.toFixed(4)}</span>}
+                        {onClose && (
+                          <button onClick={()=>onClose(p)} style={{ background:"rgba(255,68,68,0.25)", border:"1px solid #ff4444aa", color:"#fff", borderRadius:6, padding:"5px 12px", fontSize:11, cursor:"pointer", fontFamily:"monospace", fontWeight:700, letterSpacing:1 }}>
+                            CERRAR
+                          </button>
+                        )}
+                      </div>
+                      {entry && (
                         <div style={{ textAlign:"right" }}>
-                          <div style={{ color:col, fontWeight:700, fontSize:16, fontFamily:"monospace" }}>
+                          <div style={{ color:col, fontWeight:700, fontSize:18, fontFamily:"monospace" }}>
                             {pnlUsd >= 0 ? "+" : ""}{pnlUsd.toFixed(2)}$
                           </div>
-                          <div style={{ color:col+"aa", fontWeight:700, fontSize:12, fontFamily:"monospace" }}>
+                          <div style={{ color:col+"bb", fontWeight:700, fontSize:12, fontFamily:"monospace" }}>
                             {pnlPct >= 0 ? "+" : ""}{(pnlPct*100).toFixed(2)}%
                           </div>
                         </div>
-                      );
-                    })()}
+                      )}
+                    </div>
+                  </div>
+                  {/* Row 2: score text */}
+                  {p.score != null && (
+                    <div style={{ color:"#888", fontFamily:"monospace", fontSize:11, marginBottom:4 }}>
+                      Score {p.score >= 0 ? "+" : ""}{p.score}
+                    </div>
+                  )}
+                  {/* Row 3: entrada / SL / TP / hora */}
+                  <div style={{ display:"flex", gap:16, fontFamily:"monospace", fontSize:11, flexWrap:"wrap" }}>
+                    <span style={{ color:"#bbb" }}>entrada <span style={{ color:"#ccc" }}>${entry?.toFixed(4)}</span></span>
+                    <span style={{ color:"#bbb" }}>SL <span style={{ color:"#ff4444" }}>${p.stop_loss?.toFixed(4)}</span></span>
+                    <span style={{ color:"#bbb" }}>TP <span style={{ color:"#00ff88" }}>${p.take_profit?.toFixed(4)}</span></span>
+                    {p.entry_time && <span style={{ color:"#ccc" }}>{new Date(p.entry_time).toLocaleString("es-AR",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"})}</span>}
                   </div>
                 </div>
-                <div style={{ display:"flex", gap:14, marginTop:6, fontFamily:"monospace", fontSize:11, flexWrap:"wrap" }}>
-                  <span style={{ color:"#bbb" }}>entrada <span style={{ color:"#ccc" }}>${p.entry_price?.toFixed(4)}</span></span>
-                  <span style={{ color:"#bbb" }}>SL <span style={{ color:"#ff4444" }}>${p.stop_loss?.toFixed(4)}</span></span>
-                  <span style={{ color:"#bbb" }}>TP <span style={{ color:"#00ff88" }}>${p.take_profit?.toFixed(4)}</span></span>
-                  {p.entry_time && <span style={{ color:"#888" }}>{new Date(p.entry_time).toLocaleString("es-AR",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}</span>}
-                </div>
-              </div>
-            ))
+              );
+            })
           }
         </div>
       )}
