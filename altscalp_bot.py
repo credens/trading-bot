@@ -378,39 +378,27 @@ def monitor_positions(client, state):
 
 # ── Ciclo Principal ────────────────────────────────────────────────────────────
 def run_cycle(client):
-    # Leer estado desde disco cada ciclo (igual que altcoin_bot)
     state = load_state()
 
     now_local = datetime.now()
-    cap = state.get("current_capital", CAPITAL)
+    cap   = state.get("current_capital", CAPITAL)
     n_pos = len(state.get("positions", {}))
     log.info(f"── ALTSCALP {now_local.strftime('%H:%M:%S')} | ${cap:.1f} | {n_pos}/{MAX_POSITIONS} pos ──")
 
-    # 0. Cierres manuales: el dashboard escribe manual_close:[sym] en el estado
+    # 0. Cierres manuales (del dashboard)
     for sym in list(state.get("manual_close", [])):
         if sym in state["positions"]:
             log.info(f"  🖐 Cierre manual: {sym}")
             try:
-                ticker = client.futures_symbol_ticker(symbol=sym)
-                price  = float(ticker["price"])
+                price = float(client.futures_symbol_ticker(symbol=sym)["price"])
             except Exception:
-                price  = state["positions"][sym].get("entry_price", 0)
+                price = state["positions"][sym].get("entry_price", 0)
             close_position(state, sym, price, "MANUAL")
     state["manual_close"] = []
 
-    # 1. Monitorear posiciones abiertas SIEMPRE (SL/TP/emergency nunca se saltan)
+    # 1. Monitorear SL/TP/emergency de posiciones abiertas
     if state["positions"]:
         monitor_positions(client, state)
-
-    # 2. Daily loss limit -5%: bloquea nuevas entradas, pero posiciones ya monitoreadas
-    today_str  = now_local.strftime("%Y-%m-%d")
-    today_pnl  = sum(t["pnl"] for t in state.get("closed_trades", [])
-                     if (t.get("exit_time") or "").startswith(today_str))
-    if today_pnl < -(cap * 0.05):
-        log.warning(f"  🛑 Daily loss limit {today_pnl:.2f} — sin nuevas entradas")
-        add_log(state, f"🛑 Daily loss limit {today_pnl:.2f}")
-        save_state(state)
-        return
 
     # 2. Refresh scanner cada 5 min
     global _coin_cache
@@ -423,59 +411,39 @@ def run_cycle(client):
             for c in _coin_cache["coins"][:15]
         ]
 
-    # 3. Buscar entradas si hay slots disponibles
+    # 3. Entradas si hay slots
     slots = MAX_POSITIONS - len(state["positions"])
-    if slots <= 0:
-        save_state(state)
-        return
+    if slots > 0 and _coin_cache["coins"]:
+        analyzed = 0
+        entries  = []
+        for rank, coin in enumerate(_coin_cache["coins"]):
+            if analyzed >= slots * 5:
+                break
+            sym = coin["symbol"]
+            if sym in state["positions"] or coin["change_pct"] < 0.5:
+                continue
+            ind = get_indicators(client, sym)
+            if not ind or ind["vol_ratio"] < 1.3:
+                continue
+            analyzed += 1
+            direction, score = analyze_entry(ind)
+            if direction != "FLAT":
+                entries.append((score, rank, direction, coin, ind))
 
-    coins = [c for c in _coin_cache["coins"] if c["symbol"] not in state["positions"]]
-    entries = []
-    analyzed = 0
+        entries.sort(key=lambda x: x[0], reverse=True)
+        cap = state["current_capital"]   # actualizado tras cierres
 
-    for rank, coin in enumerate(_coin_cache["coins"]):
-        if analyzed >= slots * 5:
-            break
-        sym = coin["symbol"]
-        if sym in state["positions"]:
-            continue
-
-        # Pre-filtro rápido: variación mínima 1%
-        if coin["change_pct"] < 0.5:
-            continue
-
-        ind = get_indicators(client, sym)
-        if not ind:
-            continue
-        analyzed += 1
-
-        # Pre-filtro: necesita al menos algo de volume burst
-        if ind["vol_ratio"] < 1.3:
-            continue
-
-        direction, score = analyze_entry(ind)
-        if direction == "FLAT":
-            continue
-
-        entries.append((score, rank, direction, coin, ind))
-
-    entries.sort(key=lambda x: x[0], reverse=True)
-
-    for score, rank, direction, coin, ind in entries[:slots]:
-        sym   = coin["symbol"]
-        price = ind["price"]
-        lev   = get_leverage(sym, rank)
-        size  = round(cap * SIZE_PCT, 2)
-        if size < 10 or state["current_capital"] < size:
-            continue
-
-        # TP/SL dinámicos basados en ATR
-        atr = ind["atr_pct"] / 100
-        tp  = max(TP_PCT, min(atr * 0.8, 0.005))   # 0.2% – 0.5%
-        sl  = max(SL_PCT, min(atr * 0.5, 0.003))   # 0.15% – 0.3%
-
-        open_position(state, sym, direction, price, size, lev, tp, sl, score)
-        log.info(f"    vol:{ind['vol_ratio']}x vel:{ind['velocity']:+.2f}% RSI:{ind['rsi']} BB:{ind['bb_pct']:.2f}")
+        for score, rank, direction, coin, ind in entries[:slots]:
+            sym  = coin["symbol"]
+            size = round(cap * SIZE_PCT, 2)
+            if size < 10 or cap < size:
+                continue
+            lev  = get_leverage(sym, rank)
+            atr  = ind["atr_pct"] / 100
+            tp   = max(TP_PCT, min(atr * 0.8, 0.005))
+            sl   = max(SL_PCT, min(atr * 0.5, 0.003))
+            open_position(state, sym, direction, ind["price"], size, lev, tp, sl, score)
+            log.info(f"    vol:{ind['vol_ratio']}x vel:{ind['velocity']:+.2f}% RSI:{ind['rsi']} BB:{ind['bb_pct']:.2f}")
 
     save_state(state)
 

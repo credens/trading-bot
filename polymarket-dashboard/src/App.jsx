@@ -1231,19 +1231,61 @@ export default function Dashboard() {
     const symbol     = pos.symbol || (isBtcBot ? "BTCUSDT" : pos.id) || "?";
     if (!confirm(`¿Cerrar posición de ${symbol} al precio actual?`)) return;
 
-    // ── AltScalp: el bot maneja todo, el dashboard solo señala ──────────────
+    // ── AltScalp: actualizar UI inmediatamente + señalar al bot ─────────────
     if (isAltScalp) {
       try {
-        // 1. Actualizar UI inmediatamente (quitar posición de pantalla)
-        const uiPositions = {...(asData.positions||{})};
-        delete uiPositions[symbol];
-        setAsData(prev => ({...prev, positions: uiPositions}));
+        // 1. Calcular PnL con precio live o entrada
+        const sym = symbol;
+        let exitPrice = lp?.[sym];
+        if (!exitPrice) {
+          try {
+            const ticker = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${sym}`).then(r=>r.json());
+            exitPrice = parseFloat(ticker.price) || 0;
+          } catch { exitPrice = pos.entry_price || 0; }
+        }
+        if (!exitPrice || exitPrice <= 0) exitPrice = pos.entry_price || 0;
+
+        const leverage = pos.leverage || 10;
+        const side     = pos.direction || pos.side || "LONG";
+        const size     = pos.size_usdt || pos.size || 0;
+        const pnlPct   = side === "LONG"
+          ? (exitPrice - pos.entry_price) / pos.entry_price * leverage
+          : (pos.entry_price - exitPrice) / pos.entry_price * leverage;
+        const pnl = parseFloat((size * pnlPct).toFixed(2));
+
+        const closedTrade = {
+          ...pos, exit_price: exitPrice,
+          exit_time: new Date().toISOString(),
+          exit_reason: "MANUAL", pnl,
+          pnl_pct: parseFloat((pnlPct*100).toFixed(2)), status: "CLOSED"
+        };
+
+        // 2. Actualizar UI inmediatamente
+        setAsData(prev => {
+          const newPositions = {...(prev.positions||{})};
+          delete newPositions[sym];
+          const prevTrades = prev.total_trades || (prev.closed_trades||[]).length;
+          const prevWins   = Math.round((prev.win_rate||0) / 100 * prevTrades);
+          const newTotalPnl = parseFloat(((prev.total_pnl||0) + pnl).toFixed(2));
+          const newCapital  = parseFloat(((prev.current_capital||200) + pnl).toFixed(2));
+          const newClosed   = [...(prev.closed_trades||[]), closedTrade].slice(-100);
+          return {
+            ...prev,
+            positions: newPositions,
+            current_capital: newCapital,
+            total_pnl: newTotalPnl,
+            total_pnl_pct: parseFloat((newTotalPnl / (prev.initial_capital||200) * 100).toFixed(2)),
+            closed_trades: newClosed,
+            win_rate: parseFloat(((prevWins+(pnl>0?1:0))/(prevTrades+1)*100).toFixed(1)),
+            total_trades: prevTrades + 1,
+            cycle_log: [{time:new Date().toLocaleTimeString("es-AR"), msg:`🛑 MANUAL ${sym} @ $${exitPrice.toFixed(4)} | P&L ${pnl>=0?"+":""}$${pnl.toFixed(2)}`}, ...(prev.cycle_log||[]).slice(0,49)],
+          };
+        });
         lastManualClose.current = Date.now();
         manuallyClosed.current.add(symbol);
         setTimeout(() => manuallyClosed.current.delete(symbol), 60000);
 
-        // 2. Señalar al bot via manual_close (NO borrar la posición del disco —
-        //    el bot necesita encontrarla para calcular PnL y registrar el trade)
+        // 3. Señalar al bot via manual_close en disco
         const srvState = await fetch(`${LOCAL_API}/state/altscalp?t=${Date.now()}`).then(r=>r.json());
         await fetch(`${LOCAL_API}/state/altscalp`, {
           method: "POST", headers: {"Content-Type":"application/json"},
