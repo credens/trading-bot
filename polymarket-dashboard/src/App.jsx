@@ -635,15 +635,28 @@ function AltScalpPanel({ data, onClose }) {
   return (
     <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(0,204,255,0.15)", borderRadius:12, padding:"18px 20px" }}>
       {/* Header */}
-      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:18 }}>
         <div>
-          <div style={{ color:ACC, fontWeight:700, letterSpacing:3, fontSize:12 }}>⚡ ALTSCALP HFT</div>
-          <div style={{ color:"#888", fontSize:10, marginTop:2 }}>Alta frecuencia · 15s · leverage variable</div>
+          <div style={{ color:ACC, fontWeight:700, letterSpacing:2, fontSize:13 }}>⚡ ALTSCALP HFT</div>
+          <div style={{ color:"#bbb", fontSize:11 }}>Alta frecuencia · 15s · leverage 10/20/50x · paper trading</div>
         </div>
-        <div style={{ textAlign:"right" }}>
-          <div style={{ color:"#ccc", fontFamily:"monospace", fontSize:15, fontWeight:700 }}>${(data.current_capital||0).toFixed(2)}</div>
-          <div style={{ color:(data.total_pnl||0)>=0?"#00ff88":"#ff4444", fontSize:11, fontFamily:"monospace" }}>{(data.total_pnl||0)>=0?"+":""}${(data.total_pnl||0).toFixed(2)} · {(data.win_rate||0).toFixed(1)}% WR</div>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          {positions.length>0
+            ? <span style={{ background:"rgba(0,204,255,0.1)", border:"1px solid #00ccff55", color:ACC, borderRadius:6, padding:"3px 8px", fontSize:10, fontFamily:"monospace", fontWeight:700 }}>● OPERANDO ({positions.length})</span>
+            : <span style={{ background:"rgba(0,204,102,0.08)", border:"1px solid #00cc6633", color:"#00cc66", borderRadius:6, padding:"3px 8px", fontSize:10, fontFamily:"monospace" }}>● ACTIVO</span>
+          }
+          <Badge text="PAPER" color={ACC} />
         </div>
+      </div>
+
+      {/* Stats bar */}
+      <div style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
+        <Stat label="Capital"   value={`$${(data.current_capital||0).toFixed(2)}`} />
+        <PnlDisplay pnl={data.total_pnl||0} pct={data.total_pnl_pct||0} />
+        <Stat label="Win Rate"  value={`${(data.win_rate||0).toFixed(0)}%`} color="#ffcc00" />
+        <Stat label="Abiertas"  value={positions.length} color={ACC} size={20} />
+        <Stat label="Trades"    value={(data.closed_trades||[]).length} color="#bbb" size={20} />
+        <Stat label="Max DD"    value={`${(data.max_drawdown||0).toFixed(1)}%`} color="#ff8c00" size={16} />
       </div>
 
       {/* Tabs */}
