@@ -432,11 +432,14 @@ def run_cycle(client):
 
         entries.sort(key=lambda x: x[0], reverse=True)
         cap = state["current_capital"]   # actualizado tras cierres
+        if not entries:
+            log.debug(f"  Sin entradas (analizados:{analyzed} slots:{slots})")
 
         for score, rank, direction, coin, ind in entries[:slots]:
             sym  = coin["symbol"]
             size = round(cap * SIZE_PCT, 2)
-            if size < 10 or cap < size:
+            if size < 5 or cap < size:
+                log.warning(f"  ⚠ Capital insuficiente para entrada: ${cap:.1f} × {SIZE_PCT*100:.0f}% = ${size:.1f} < $5")
                 continue
             lev  = get_leverage(sym, rank)
             atr  = ind["atr_pct"] / 100
