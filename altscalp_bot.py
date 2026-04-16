@@ -312,11 +312,19 @@ def monitor_positions(client, state):
     now = datetime.now()
 
     for symbol, pos in list(state["positions"].items()):
-        try:
-            ticker = client.futures_ticker(symbol=symbol)
-            price  = float(ticker["lastPrice"])
-        except Exception:
-            continue
+        # Obtener precio actual — 3 intentos, luego fallback a best_price
+        price = None
+        for attempt in range(3):
+            try:
+                ticker = client.futures_symbol_ticker(symbol=symbol)
+                price  = float(ticker["price"])
+                break
+            except Exception as e:
+                if attempt == 2:
+                    log.warning(f"  ⚠ {symbol} ticker falló 3 veces: {e}")
+        if price is None:
+            # Sin precio live: usar best_price y forzar chequeo de SL/emergency igual
+            price = pos.get("best_price") or pos["entry_price"]
 
         direction = pos["direction"]
         entry     = pos["entry_price"]
@@ -342,21 +350,28 @@ def monitor_positions(client, state):
         hit_tp = (direction == "LONG" and price >= tp) or (direction == "SHORT" and price <= tp)
         hit_sl = (direction == "LONG" and price <= sl) or (direction == "SHORT" and price >= sl)
 
-        entry_dt = datetime.fromisoformat(pos["entry_time"])
+        entry_dt  = datetime.fromisoformat(pos["entry_time"])
         secs_open = (now - entry_dt).total_seconds()
         time_out  = secs_open >= TIME_LIMIT_S
 
         unrealized = ((price - entry) / entry if direction == "LONG" else (entry - price) / entry) * lev
-        emergency  = unrealized < -0.05  # -5% PnL levered
+        emergency  = unrealized < -0.05  # -5% levered
 
+        reason = None
+        exit_px = price
         if hit_tp:
-            to_close.append((symbol, tp, "TAKE_PROFIT"))
+            reason, exit_px = "TAKE_PROFIT", tp
         elif hit_sl:
-            to_close.append((symbol, sl, "STOP_LOSS"))
+            # Usar el precio actual (peor caso real), no el SL teórico
+            reason, exit_px = "STOP_LOSS", min(price, sl) if direction == "LONG" else max(price, sl)
         elif emergency:
-            to_close.append((symbol, price, "EMERGENCY"))
+            reason, exit_px = "EMERGENCY", price
         elif time_out:
-            to_close.append((symbol, price, "TIME_LIMIT"))
+            reason, exit_px = "TIME_LIMIT", price
+
+        if reason:
+            log.info(f"  → {reason} {symbol} @ ${exit_px:.4f} (unreal: {unrealized*100:.1f}%)")
+            to_close.append((symbol, exit_px, reason))
 
     for symbol, price, reason in to_close:
         close_position(state, symbol, price, reason)
