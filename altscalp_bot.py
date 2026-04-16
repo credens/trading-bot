@@ -386,16 +386,6 @@ def run_cycle(client):
     n_pos = len(state.get("positions", {}))
     log.info(f"── ALTSCALP {now_local.strftime('%H:%M:%S')} | ${cap:.1f} | {n_pos}/{MAX_POSITIONS} pos ──")
 
-    # Daily loss limit -5%
-    today_str  = now_local.strftime("%Y-%m-%d")
-    today_pnl  = sum(t["pnl"] for t in state.get("closed_trades", [])
-                     if (t.get("exit_time") or "").startswith(today_str))
-    if today_pnl < -(cap * 0.05):
-        log.warning(f"  🛑 Daily loss limit {today_pnl:.2f} — pausando")
-        add_log(state, f"🛑 Daily loss limit {today_pnl:.2f}")
-        save_state(state)
-        return
-
     # 0. Cierres manuales: el dashboard escribe manual_close:[sym] en el estado
     for sym in list(state.get("manual_close", [])):
         if sym in state["positions"]:
@@ -408,9 +398,19 @@ def run_cycle(client):
             close_position(state, sym, price, "MANUAL")
     state["manual_close"] = []
 
-    # 1. Monitorear posiciones abiertas primero
+    # 1. Monitorear posiciones abiertas SIEMPRE (SL/TP/emergency nunca se saltan)
     if state["positions"]:
         monitor_positions(client, state)
+
+    # 2. Daily loss limit -5%: bloquea nuevas entradas, pero posiciones ya monitoreadas
+    today_str  = now_local.strftime("%Y-%m-%d")
+    today_pnl  = sum(t["pnl"] for t in state.get("closed_trades", [])
+                     if (t.get("exit_time") or "").startswith(today_str))
+    if today_pnl < -(cap * 0.05):
+        log.warning(f"  🛑 Daily loss limit {today_pnl:.2f} — sin nuevas entradas")
+        add_log(state, f"🛑 Daily loss limit {today_pnl:.2f}")
+        save_state(state)
+        return
 
     # 2. Refresh scanner cada 5 min
     global _coin_cache
