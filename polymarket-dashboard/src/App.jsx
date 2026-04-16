@@ -685,31 +685,31 @@ function AltScalpPanel({ data, liveprices, onClose }) {
               const pnlUsd  = size * pnlPct;
               const col     = pnlUsd >= 0 ? "#00ff88" : "#ff4444";
               return (
-                <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:12, padding:"18px 22px" }}>
+                <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:10, padding:"12px 16px" }}>
                   {/* Row 1: symbol+badges left, size+price+CERRAR right */}
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
-                    <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:6 }}>
+                    <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
                       <a href={`https://www.binance.com/en/futures/${p.symbol}`} target="_blank" rel="noopener noreferrer"
-                        style={{ color:ACC, fontWeight:700, fontFamily:"monospace", fontSize:16, textDecoration:"none" }}>{p.symbol}</a>
+                        style={{ color:ACC, fontWeight:700, fontFamily:"monospace", fontSize:13, textDecoration:"none" }}>{p.symbol}</a>
                       <Badge2 text={p.direction} color={p.direction==="LONG"?"#00ff88":"#ff4444"} />
                       <Badge2 text={`${lev}x`} color={ACC} />
                     </div>
-                    <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:8 }}>
-                      <div style={{ display:"flex", gap:12, alignItems:"center" }}>
-                        <span style={{ color:"#ffb800", fontFamily:"monospace", fontWeight:700, fontSize:15 }}>${size.toFixed(0)}</span>
-                        {curPx && <span style={{ color:"#bbb", fontFamily:"monospace", fontSize:12 }}>${curPx.toFixed(4)}</span>}
+                    <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
+                      <div style={{ display:"flex", gap:10, alignItems:"center" }}>
+                        <span style={{ color:"#ffb800", fontFamily:"monospace", fontWeight:700, fontSize:12 }}>${size.toFixed(0)}</span>
+                        {curPx && <span style={{ color:"#bbb", fontFamily:"monospace", fontSize:11 }}>${curPx.toFixed(4)}</span>}
                         {onClose && (
-                          <button onClick={()=>onClose(p)} style={{ background:"rgba(255,68,68,0.3)", border:"1px solid #ff4444bb", color:"#fff", borderRadius:6, padding:"6px 14px", fontSize:12, cursor:"pointer", fontFamily:"monospace", fontWeight:700, letterSpacing:1 }}>
+                          <button onClick={()=>onClose(p)} style={{ background:"rgba(255,68,68,0.3)", border:"1px solid #ff4444bb", color:"#fff", borderRadius:5, padding:"4px 10px", fontSize:11, cursor:"pointer", fontFamily:"monospace", fontWeight:700, letterSpacing:1 }}>
                             CERRAR
                           </button>
                         )}
                       </div>
                       {entry && (
                         <div style={{ textAlign:"right" }}>
-                          <div style={{ color:col, fontWeight:700, fontSize:22, fontFamily:"monospace", lineHeight:1 }}>
+                          <div style={{ color:col, fontWeight:700, fontSize:16, fontFamily:"monospace", lineHeight:1 }}>
                             {pnlUsd >= 0 ? "+" : ""}{pnlUsd.toFixed(2)}$
                           </div>
-                          <div style={{ color:col+"bb", fontWeight:700, fontSize:13, fontFamily:"monospace", marginTop:2 }}>
+                          <div style={{ color:col+"bb", fontWeight:700, fontSize:11, fontFamily:"monospace", marginTop:2 }}>
                             {pnlPct >= 0 ? "+" : ""}{(pnlPct*100).toFixed(2)}%
                           </div>
                         </div>
@@ -718,12 +718,12 @@ function AltScalpPanel({ data, liveprices, onClose }) {
                   </div>
                   {/* Row 2: score text */}
                   {p.score != null && (
-                    <div style={{ color:"#888", fontFamily:"monospace", fontSize:12, marginBottom:6 }}>
+                    <div style={{ color:"#888", fontFamily:"monospace", fontSize:10, marginBottom:4 }}>
                       Score {p.score >= 0 ? "+" : ""}{p.score}
                     </div>
                   )}
                   {/* Row 3: entrada / SL / TP / hora */}
-                  <div style={{ display:"flex", gap:18, fontFamily:"monospace", fontSize:12, flexWrap:"wrap" }}>
+                  <div style={{ display:"flex", gap:14, fontFamily:"monospace", fontSize:10, flexWrap:"wrap" }}>
                     <span style={{ color:"#bbb" }}>entrada <span style={{ color:"#ccc" }}>${entry?.toFixed(4)}</span></span>
                     <span style={{ color:"#bbb" }}>SL <span style={{ color:"#ff4444" }}>${p.stop_loss?.toFixed(4)}</span></span>
                     <span style={{ color:"#bbb" }}>TP <span style={{ color:"#00ff88" }}>${p.take_profit?.toFixed(4)}</span></span>
