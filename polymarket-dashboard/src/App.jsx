@@ -1169,7 +1169,7 @@ export default function Dashboard() {
   const LOCAL_API = "http://localhost:8082";
 
   const fetchStates = useCallback(async () => {
-    const recentManualClose = Date.now() - lastManualClose.current < 30000;
+    const recentManualClose = Date.now() - lastManualClose.current < 60000;
     const load = async (bot, fallbackUrl, setter, lsKey) => {
       try {
         const d = await fetch(`${LOCAL_API}/state/${bot}?t=${Date.now()}`).then(r=>r.json());
@@ -1226,13 +1226,40 @@ export default function Dashboard() {
   }, [fetchLivePrices]);
 
   const closePosition = useCallback(async (bot, pos, lp=liveprices) => {
-    const isBtcBot = bot === "scalping";
+    const isBtcBot   = bot === "scalping";
     const isAltScalp = bot === "altscalp";
-    const symbol = pos.symbol || (isBtcBot ? "BTCUSDT" : pos.id) || "?";
+    const symbol     = pos.symbol || (isBtcBot ? "BTCUSDT" : pos.id) || "?";
     if (!confirm(`¿Cerrar posición de ${symbol} al precio actual?`)) return;
+
+    // ── AltScalp: el bot maneja todo, el dashboard solo señala ──────────────
+    if (isAltScalp) {
+      try {
+        // 1. Actualizar UI inmediatamente (quitar posición de pantalla)
+        const uiPositions = {...(asData.positions||{})};
+        delete uiPositions[symbol];
+        setAsData(prev => ({...prev, positions: uiPositions}));
+        lastManualClose.current = Date.now();
+        manuallyClosed.current.add(symbol);
+        setTimeout(() => manuallyClosed.current.delete(symbol), 60000);
+
+        // 2. Señalar al bot via manual_close (NO borrar la posición del disco —
+        //    el bot necesita encontrarla para calcular PnL y registrar el trade)
+        const srvState = await fetch(`${LOCAL_API}/state/altscalp?t=${Date.now()}`).then(r=>r.json());
+        await fetch(`${LOCAL_API}/state/altscalp`, {
+          method: "POST", headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({
+            ...srvState,
+            manual_close: [...(srvState.manual_close||[]), symbol],
+          }),
+        });
+      } catch(e) { console.error("altscalp close error:", e); }
+      return;
+    }
+
+    // ── Scalping / Altcoin: lógica existente ────────────────────────────────
     try {
-      const botKey = bot === "scalping" ? "scalping" : bot === "altscalp" ? "altscalp" : "altcoins";
-      const state = await fetch(`${LOCAL_API}/state/${botKey}?t=${Date.now()}`).then(r=>r.json());
+      const botKey = isBtcBot ? "scalping" : "altcoins";
+      const state  = await fetch(`${LOCAL_API}/state/${botKey}?t=${Date.now()}`).then(r=>r.json());
 
       const sym = isBtcBot ? "BTCUSDT" : symbol;
       let exitPrice = lp?.[sym] || lp?.[symbol];
@@ -1244,74 +1271,56 @@ export default function Dashboard() {
       }
       if (!exitPrice || exitPrice <= 0) exitPrice = pos.entry_price || 0;
 
-      const leverage = pos.leverage || 1;
-      const side = pos.side || pos.direction || "LONG";
-      const size = pos.size_usdt || pos.size || 0;
-      const pnlPct = side === "LONG"
+      const leverage = pos.leverage || 3;
+      const side     = pos.side || pos.direction || "LONG";
+      const size     = pos.size || pos.size_usdt || 0;
+      const pnlPct   = side === "LONG"
         ? (exitPrice - pos.entry_price) / pos.entry_price * leverage
         : (pos.entry_price - exitPrice) / pos.entry_price * leverage;
       const pnl = parseFloat((size * pnlPct).toFixed(2));
 
-      const closedTrade = {
-        symbol, side, entry_price: pos.entry_price, exit_price: exitPrice,
-        entry_time: pos.entry_time, exit_time: new Date().toISOString(),
-        exit_reason: "MANUAL", pnl, pnl_pct: parseFloat((pnlPct*100).toFixed(2)),
-        size, leverage, status: "CLOSED",
-      };
+      const closedTrade = { ...pos, exit_price: exitPrice, exit_time: new Date().toISOString(),
+        exit_reason: "MANUAL", pnl, pnl_pct: parseFloat((pnlPct*100).toFixed(2)), status: "CLOSED" };
 
       const closedTradeId = pos.id || symbol;
-      const displayData = bot === "scalping" ? scData : bot === "altscalp" ? asData : altData;
-
-      // Filtrar la posición cerrada del estado actual
-      const newOpenPositions = (displayData.open_positions||[]).filter(p => p.symbol !== symbol && p.id !== closedTradeId);
+      const displayData   = isBtcBot ? scData : altData;
+      const newOpenPositions = (displayData.open_positions||displayData.open_trades||[]).filter(p => p.symbol !== symbol && p.id !== closedTradeId);
       const newOpenTrades    = (displayData.open_trades||[]).filter(t => t.id !== closedTradeId && t.symbol !== symbol);
       const newPositions     = {...(displayData.positions||{})};
-      delete newPositions[symbol];
-      delete newPositions[closedTradeId];
+      delete newPositions[symbol]; delete newPositions[closedTradeId];
 
-      const allClosed  = [...(state.closed_trades || displayData.closed_trades || []), closedTrade].slice(-300);
+      const allClosed    = [...(state.all_closed_trades || state.closed_trades || displayData.all_closed_trades || displayData.closed_trades || []), closedTrade].slice(-100);
       const prevTotalPnl = displayData.total_pnl || state.total_pnl || 0;
-      const totalPnl   = parseFloat((prevTotalPnl + pnl).toFixed(2));
-      const initCap    = state.initial_capital || displayData.initial_capital || 200;
-      const reservado  = Object.values(newPositions).reduce((s,p) => s+(p.size_usdt||p.size||0), 0);
-      const capital    = parseFloat((displayData.current_capital + pnl).toFixed(2));
-      const prevTrades = displayData.total_trades || state.total_trades || allClosed.length;
-      const prevWins   = Math.round((displayData.win_rate||0) / 100 * prevTrades);
-      const newTotal   = prevTrades + 1;
-      const newWR      = parseFloat(((prevWins + (pnl > 0 ? 1 : 0)) / newTotal * 100).toFixed(1));
+      const totalPnl     = parseFloat((prevTotalPnl + pnl).toFixed(2));
+      const reservado    = newOpenPositions.reduce((s,p) => s+(p.size||p.size_usdt||0), 0);
+      const capital      = parseFloat(((state.initial_capital||500) - reservado + totalPnl).toFixed(2));
+      const prevTrades   = displayData.total_trades || state.total_trades || allClosed.length;
+      const prevWins     = Math.round((displayData.win_rate||0) / 100 * prevTrades);
 
       const newState = {
         ...state,
-        positions: newPositions,
-        open_positions: newOpenPositions,
-        open_trades: newOpenTrades,
-        closed_trades: allClosed,
-        total_pnl: totalPnl,
-        total_pnl_pct: parseFloat((totalPnl / initCap * 100).toFixed(2)),
-        current_capital: capital,
-        win_rate: newWR,
-        total_trades: newTotal,
-        cycle_log: [{ time: new Date().toLocaleTimeString("es-AR"),
-          msg: `🛑 MANUAL ${symbol} @ $${exitPrice.toFixed(4)} | P&L ${pnl>=0?"+":""}$${pnl.toFixed(2)}` },
-          ...(state.cycle_log||[]).slice(0,49)],
-        manual_close: [...(state.manual_close||[]), symbol],
+        positions: newPositions, open_positions: newOpenPositions, open_trades: newOpenTrades,
+        all_closed_trades: allClosed, closed_trades: allClosed.slice(-30),
+        total_pnl: totalPnl, total_pnl_raw: totalPnl,
+        total_pnl_pct: parseFloat((totalPnl/(state.initial_capital||500)*100).toFixed(2)),
+        current_capital: capital, capital,
+        win_rate: parseFloat(((prevWins+(pnl>0?1:0))/(prevTrades+1)*100).toFixed(1)),
+        total_trades: prevTrades + 1,
+        cycle_log: [{time:new Date().toLocaleTimeString("es-AR"), msg:`🛑 MANUAL ${symbol} @ $${exitPrice.toFixed(2)} | P&L ${pnl>=0?"+":""}$${pnl.toFixed(2)}`}, ...(state.cycle_log||[]).slice(0,49)],
+        manual_close: [symbol],
+        cooldowns: pnl < 0 ? {...(state.cooldowns||{}), [symbol]: new Date(Date.now()+20*60*1000).toISOString()} : (state.cooldowns||{}),
         last_updated: new Date().toISOString(),
       };
 
-      if (bot === "scalping") setScData(newState);
-      else if (bot === "altscalp") setAsData(newState);
-      else setAltData(newState);
-
+      if (isBtcBot) setScData(newState); else setAltData(newState);
       lastManualClose.current = Date.now();
       manuallyClosed.current.add(symbol);
-      setTimeout(() => manuallyClosed.current.delete(symbol), 5 * 60 * 1000);
+      if (closedTradeId) manuallyClosed.current.add(closedTradeId);
+      setTimeout(() => { manuallyClosed.current.delete(symbol); manuallyClosed.current.delete(closedTradeId); }, 5*60*1000);
 
       try {
-        await fetch(`${LOCAL_API}/state/${botKey}`, {
-          method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(newState)
-        });
+        await fetch(`${LOCAL_API}/state/${botKey}`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(newState)});
       } catch {}
-
     } catch(e) { console.error(e); alert("Error: " + e.message); }
   }, [setScData, setAltData, setAsData, scData, altData, asData, lastManualClose, manuallyClosed, liveprices]);
 
