@@ -1227,12 +1227,12 @@ export default function Dashboard() {
 
   const closePosition = useCallback(async (bot, pos, lp=liveprices) => {
     const isBtcBot = bot === "scalping";
+    const isAltScalp = bot === "altscalp";
     const symbol = pos.symbol || (isBtcBot ? "BTCUSDT" : pos.id) || "?";
     if (!confirm(`¿Cerrar posición de ${symbol} al precio actual?`)) return;
     try {
-      const botKey = bot === "scalping" ? "scalping" : "altcoins";
+      const botKey = bot === "scalping" ? "scalping" : bot === "altscalp" ? "altscalp" : "altcoins";
       const state = await fetch(`${LOCAL_API}/state/${botKey}?t=${Date.now()}`).then(r=>r.json());
-      if (!pos) { alert("No se encontró la posición"); return; }
 
       const sym = isBtcBot ? "BTCUSDT" : symbol;
       let exitPrice = lp?.[sym] || lp?.[symbol];
@@ -1244,81 +1244,76 @@ export default function Dashboard() {
       }
       if (!exitPrice || exitPrice <= 0) exitPrice = pos.entry_price || 0;
 
-      const leverage = pos.leverage || 3;
+      const leverage = pos.leverage || 1;
       const side = pos.side || pos.direction || "LONG";
-      const size = pos.size || pos.size_usdt || 0;
+      const size = pos.size_usdt || pos.size || 0;
       const pnlPct = side === "LONG"
         ? (exitPrice - pos.entry_price) / pos.entry_price * leverage
         : (pos.entry_price - exitPrice) / pos.entry_price * leverage;
       const pnl = parseFloat((size * pnlPct).toFixed(2));
 
-      const closedTrade = { ...pos, exit_price: exitPrice, exit_time: new Date().toISOString(),
-        exit_reason: "MANUAL", pnl, pnl_pct: parseFloat((pnlPct*100).toFixed(2)), status: "CLOSED" };
+      const closedTrade = {
+        symbol, side, entry_price: pos.entry_price, exit_price: exitPrice,
+        entry_time: pos.entry_time, exit_time: new Date().toISOString(),
+        exit_reason: "MANUAL", pnl, pnl_pct: parseFloat((pnlPct*100).toFixed(2)),
+        size, leverage, status: "CLOSED",
+      };
 
       const closedTradeId = pos.id || symbol;
-      // Usar el estado del DASHBOARD (lo que se ve en pantalla) para filtrar posiciones,
-      // no el del servidor que puede estar desactualizado o vacío por un restart del bot
-      const displayData = bot === "scalping" ? scData : altData;
-      const newOpenPositions = (displayData.open_positions||displayData.open_trades||[]).filter(p => p.symbol !== symbol && p.id !== closedTradeId);
-      const newOpenTrades = (displayData.open_trades||[]).filter(t => t.id !== closedTradeId && t.symbol !== symbol);
-      const newPositions = {...(displayData.positions||{})};
+      const displayData = bot === "scalping" ? scData : bot === "altscalp" ? asData : altData;
+
+      // Filtrar la posición cerrada del estado actual
+      const newOpenPositions = (displayData.open_positions||[]).filter(p => p.symbol !== symbol && p.id !== closedTradeId);
+      const newOpenTrades    = (displayData.open_trades||[]).filter(t => t.id !== closedTradeId && t.symbol !== symbol);
+      const newPositions     = {...(displayData.positions||{})};
       delete newPositions[symbol];
       delete newPositions[closedTradeId];
 
-      // Para closed trades usar el servidor (tiene el historial completo) o el display como fallback
-      const allClosed = [...(state.all_closed_trades || state.closed_trades || displayData.all_closed_trades || displayData.closed_trades || []), closedTrade].slice(-100);
-      // IMPORTANTE: NO recalcular total_pnl sumando solo los trades en disco (son pocos y destruye el histórico).
-      // Usar el total acumulado del estado + el P&L de esta operación.
+      const allClosed  = [...(state.closed_trades || displayData.closed_trades || []), closedTrade].slice(-300);
       const prevTotalPnl = displayData.total_pnl || state.total_pnl || 0;
-      const totalPnl = parseFloat((prevTotalPnl + pnl).toFixed(2));
-      const wins = allClosed.filter(t => t.pnl > 0);
-      const reservado = newOpenPositions.reduce((s,p) => s+(p.size||p.size_usdt||0), 0);
-      const capital = parseFloat(((state.initial_capital||500) - reservado + totalPnl).toFixed(2));
+      const totalPnl   = parseFloat((prevTotalPnl + pnl).toFixed(2));
+      const initCap    = state.initial_capital || displayData.initial_capital || 200;
+      const reservado  = Object.values(newPositions).reduce((s,p) => s+(p.size_usdt||p.size||0), 0);
+      const capital    = parseFloat((displayData.current_capital + pnl).toFixed(2));
+      const prevTrades = displayData.total_trades || state.total_trades || allClosed.length;
+      const prevWins   = Math.round((displayData.win_rate||0) / 100 * prevTrades);
+      const newTotal   = prevTrades + 1;
+      const newWR      = parseFloat(((prevWins + (pnl > 0 ? 1 : 0)) / newTotal * 100).toFixed(1));
 
       const newState = {
         ...state,
         positions: newPositions,
         open_positions: newOpenPositions,
         open_trades: newOpenTrades,
-        all_closed_trades: allClosed,
-        closed_trades: allClosed.slice(-30),
-        total_pnl: totalPnl, total_pnl_raw: totalPnl,
-        total_pnl_pct: parseFloat((totalPnl/(state.initial_capital||500)*100).toFixed(2)),
-        current_capital: capital, capital,
-        win_rate: (() => {
-          const prevTrades = displayData.total_trades || state.total_trades || allClosed.length;
-          const prevWinRate = displayData.win_rate || state.win_rate || 0;
-          const prevWins = Math.round(prevWinRate / 100 * prevTrades);
-          const newTotal = prevTrades + 1;
-          return parseFloat(((prevWins + (pnl > 0 ? 1 : 0)) / newTotal * 100).toFixed(1));
-        })(),
-        total_trades: (displayData.total_trades || state.total_trades || allClosed.length) + 1,
+        closed_trades: allClosed,
+        total_pnl: totalPnl,
+        total_pnl_pct: parseFloat((totalPnl / initCap * 100).toFixed(2)),
+        current_capital: capital,
+        win_rate: newWR,
+        total_trades: newTotal,
         cycle_log: [{ time: new Date().toLocaleTimeString("es-AR"),
-          msg: `🛑 MANUAL ${symbol} @ $${exitPrice.toFixed(2)} | P&L ${pnl>=0?"+":""}$${pnl.toFixed(2)}` },
+          msg: `🛑 MANUAL ${symbol} @ $${exitPrice.toFixed(4)} | P&L ${pnl>=0?"+":""}$${pnl.toFixed(2)}` },
           ...(state.cycle_log||[]).slice(0,49)],
         manual_close: [symbol],
-        cooldowns: pnl < 0 
-          ? { ...(state.cooldowns||{}), [symbol]: new Date(Date.now()+20*60*1000).toISOString() }
-          : (state.cooldowns || {}),
         last_updated: new Date().toISOString(),
       };
 
-      if (bot === "scalping") setScData(newState); else setAltData(newState);
+      if (bot === "scalping") setScData(newState);
+      else if (bot === "altscalp") setAsData(newState);
+      else setAltData(newState);
+
       lastManualClose.current = Date.now();
       manuallyClosed.current.add(symbol);
-      if (closedTradeId) manuallyClosed.current.add(closedTradeId);
-      setTimeout(() => { manuallyClosed.current.delete(symbol); manuallyClosed.current.delete(closedTradeId); }, 5 * 60 * 1000);
+      setTimeout(() => manuallyClosed.current.delete(symbol), 5 * 60 * 1000);
 
       try {
         await fetch(`${LOCAL_API}/state/${botKey}`, {
-          method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify(newState)
+          method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(newState)
         });
       } catch {}
 
     } catch(e) { console.error(e); alert("Error: " + e.message); }
-  }, [setScData, setAltData, scData, altData, lastManualClose, manuallyClosed, liveprices]);
+  }, [setScData, setAltData, setAsData, scData, altData, asData, lastManualClose, manuallyClosed, liveprices]);
 
 
   const totalPnl     = (scData.total_pnl||0) + (altData.total_pnl||0) + (asData.total_pnl||0);
@@ -1413,13 +1408,7 @@ export default function Dashboard() {
       </div>
       {/* Bottom row: AltScalp HFT */}
       <div style={{ padding:"20px 28px 0" }}>
-        <AltScalpPanel data={asData} liveprices={liveprices} onClose={(pos)=>{
-          if(!confirm(`¿Cerrar ${pos.symbol}?`)) return;
-          fetch("http://localhost:8082/state/altscalp").then(r=>r.json()).then(s=>{
-            if(s.positions?.[pos.symbol]) delete s.positions[pos.symbol];
-            return fetch("http://localhost:8082/state/altscalp",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(s)});
-          }).catch(console.error);
-        }} />
+        <AltScalpPanel data={asData} liveprices={liveprices} onClose={(pos)=>closePosition("altscalp", pos)} />
       </div>
 
       <div style={{ margin:"0 28px", padding:"12px 18px", background:"rgba(0,255,136,0.03)", border:"1px solid rgba(0,255,136,0.1)", borderRadius:10, fontSize:11, color:"#ccc" }}>
