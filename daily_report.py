@@ -23,9 +23,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [REPORT] %(message)s
 log = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).parent
-SCALPING_STATE = BASE_DIR / "paper_trading" / "scalping_state.json"
-ALTCOIN_STATE = BASE_DIR / "altcoin_data" / "state.json"
-SNAPSHOTS_DIR = BASE_DIR / "analytics"
+SCALPING_STATE  = BASE_DIR / "paper_trading" / "scalping_state.json"
+ALTCOIN_STATE   = BASE_DIR / "altcoin_data" / "state.json"
+ALTSCALP_STATE  = BASE_DIR / "paper_trading" / "altscalp_state.json"
+SNAPSHOTS_DIR   = BASE_DIR / "analytics"
 
 
 def load_state(path: Path) -> dict:
@@ -88,12 +89,14 @@ def generate_report():
     """Genera y envía el reporte diario."""
     log.info("Generando reporte diario...")
 
-    sc_state = load_state(SCALPING_STATE)
+    sc_state  = load_state(SCALPING_STATE)
     alt_state = load_state(ALTCOIN_STATE)
+    as_state  = load_state(ALTSCALP_STATE)
 
-    sc_trades = get_todays_trades(sc_state, "Scalping")
+    sc_trades  = get_todays_trades(sc_state,  "Scalping")
     alt_trades = get_todays_trades(alt_state, "Altcoin")
-    all_trades = sc_trades + alt_trades
+    as_trades  = get_todays_trades(as_state,  "AltScalp")
+    all_trades = sc_trades + alt_trades + as_trades
 
     # Stats
     total_pnl_day = sum(t.get("pnl", 0) or 0 for t in all_trades)
@@ -101,16 +104,19 @@ def generate_report():
     losses = sum(1 for t in all_trades if (t.get("pnl", 0) or 0) <= 0)
     wr = (wins / len(all_trades) * 100) if all_trades else 0
 
-    sc_capital = sc_state.get("current_capital", 0)
+    sc_capital  = sc_state.get("current_capital", 0)
     alt_capital = alt_state.get("capital") or alt_state.get("current_capital", 0)
-    total_capital = sc_capital + alt_capital
+    as_capital  = as_state.get("current_capital", 0)
+    total_capital = sc_capital + alt_capital + as_capital
 
-    sc_total_pnl = sc_state.get("total_pnl", 0)
+    sc_total_pnl  = sc_state.get("total_pnl", 0)
     alt_total_pnl = alt_state.get("total_pnl", 0)
-    total_pnl_all = sc_total_pnl + alt_total_pnl
+    as_total_pnl  = as_state.get("total_pnl", 0)
+    total_pnl_all = sc_total_pnl + alt_total_pnl + as_total_pnl
 
-    sc_dd = sc_state.get("max_drawdown", 0)
+    sc_dd  = sc_state.get("max_drawdown", 0)
     alt_dd = alt_state.get("max_drawdown", 0)
+    as_dd  = as_state.get("max_drawdown", 0)
 
     today_str = date.today().strftime("%d/%m/%Y")
 
@@ -188,19 +194,31 @@ def generate_report():
     email_ok = send_email(subject, html)
 
     # ── Send Telegram summary ────────────────────────────────────────────────
-    tg_lines = [f"📊 <b>Resumen {today_str}</b>"]
-    tg_lines.append(f"Capital: <b>${total_capital:.0f}</b>")
-    tg_lines.append(f"P&L hoy: <b>{'+'if total_pnl_day>=0 else ''}${total_pnl_day:.2f}</b>")
-    tg_lines.append(f"P&L total: {'+'if total_pnl_all>=0 else ''}${total_pnl_all:.2f}")
+    def bot_block(label, trades, capital, total_pnl, dd):
+        t_wins = sum(1 for t in trades if (t.get("pnl",0) or 0) > 0)
+        t_wr   = (t_wins/len(trades)*100) if trades else 0
+        lines  = [f"\n<b>— {label} —</b>"]
+        lines.append(f"  Capital: ${capital:.0f} | P&L total: {'+'if total_pnl>=0 else ''}${total_pnl:.2f} | DD: {dd:.1f}%")
+        lines.append(f"  Trades hoy: {len(trades)} ({t_wins}W/{len(trades)-t_wins}L) WR:{t_wr:.0f}%")
+        for t in trades:
+            sym  = t.get("symbol") or "?"
+            pnl  = t.get("pnl", 0) or 0
+            side = t.get("side") or t.get("direction", "?")
+            lev  = t.get("leverage","")
+            reason = t.get("exit_reason","")
+            hr   = (t.get("exit_time") or "")[ 11:16]
+            lines.append(f"  {'🟢' if pnl>=0 else '🔴'} {hr} {sym} {side}{f' {lev}x' if lev else ''} {reason} {'+'if pnl>=0 else ''}${pnl:.2f}")
+        if not trades:
+            lines.append("  Sin operaciones hoy")
+        return "\n".join(lines)
+
+    tg_lines = [f"📊 <b>Trading Bot HQ — {today_str}</b>"]
+    tg_lines.append(f"Capital total: <b>${total_capital:.0f}</b>")
+    tg_lines.append(f"P&L hoy: <b>{'+'if total_pnl_day>=0 else ''}${total_pnl_day:.2f}</b>  |  Total: {'+'if total_pnl_all>=0 else ''}${total_pnl_all:.2f}")
     tg_lines.append(f"Trades: {len(all_trades)} ({wins}W/{losses}L) WR:{wr:.0f}%")
-    tg_lines.append("")
-    for t in all_trades[:10]:
-        sym = t.get("symbol") or "BTCUSDT"
-        pnl = t.get("pnl", 0) or 0
-        side = t.get("side") or t.get("direction", "?")
-        tg_lines.append(f"  {'🟢' if pnl>=0 else '🔴'} {sym} {side} {'+'if pnl>=0 else ''}${pnl:.2f}")
-    if len(all_trades) > 10:
-        tg_lines.append(f"  ...y {len(all_trades)-10} más")
+    tg_lines.append(bot_block("SCALPING BTC",  sc_trades,  sc_capital,  sc_total_pnl,  sc_dd))
+    tg_lines.append(bot_block("ALTCOIN",       alt_trades, alt_capital, alt_total_pnl, alt_dd))
+    tg_lines.append(bot_block("ALTSCALP HFT",  as_trades,  as_capital,  as_total_pnl,  as_dd))
 
     tg_ok = send_telegram("\n".join(tg_lines))
 
@@ -512,20 +530,26 @@ def generate_weekly_analysis():
 
 
 def run_daemon():
-    """Corre como daemon, envía reporte a las 23:59 y análisis semanal los domingos."""
-    log.info("Daily report daemon iniciado — reporte 23:59, análisis semanal domingos")
-    last_sent = None
-    last_weekly = None
+    """Corre como daemon, envía reporte a las 8:00 y 23:59, análisis semanal los domingos."""
+    log.info("Daily report daemon iniciado — reportes a las 08:00 y 23:59")
+    last_morning = None
+    last_night   = None
+    last_weekly  = None
     while True:
         now = datetime.now()
-        if now.hour == 23 and now.minute == 59 and last_sent != now.date():
+        today = now.date()
+        # Reporte matutino 8:00
+        if now.hour == 8 and now.minute == 0 and last_morning != today:
+            generate_report()
+            last_morning = today
+        # Reporte nocturno 23:59
+        if now.hour == 23 and now.minute == 59 and last_night != today:
             generate_report()
             save_daily_snapshot()
-            last_sent = now.date()
-            # Análisis semanal los domingos
-            if now.weekday() == 6 and last_weekly != now.date():
+            last_night = today
+            if now.weekday() == 6 and last_weekly != today:
                 generate_weekly_analysis()
-                last_weekly = now.date()
+                last_weekly = today
         time.sleep(30)
 
 
