@@ -617,6 +617,179 @@ function AltcoinPanel({ data, liveprices, onClose }) {
     </div>
   );
 }
+// ─── Panel AltScalp (HFT Altcoins) ───────────────────────────────────────────
+function AltScalpPanel({ data, onClose }) {
+  const [tab, setTab] = useState("positions");
+  const [modal, setModal] = useState(null);
+  const ACC = "#00ccff";
+  const T = (id, label) => (
+    <button onClick={()=>setTab(id)} style={{ background:tab===id?`rgba(0,204,255,0.1)`:"transparent", border:`1px solid ${tab===id?"#00ccff55":"transparent"}`, color:tab===id?ACC:"#bbb", borderRadius:7, padding:"5px 14px", fontSize:11, cursor:"pointer", fontFamily:"monospace" }}>{label}</button>
+  );
+  const positions = Object.values(data.positions||{});
+  const closed    = data.closed_trades||[];
+
+  const Badge2 = ({text, color}) => (
+    <span style={{ background:`${color}22`, border:`1px solid ${color}44`, color, borderRadius:4, padding:"2px 7px", fontSize:10, fontFamily:"monospace" }}>{text}</span>
+  );
+
+  return (
+    <div style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(0,204,255,0.15)", borderRadius:12, padding:"18px 20px" }}>
+      {/* Header */}
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:14 }}>
+        <div>
+          <div style={{ color:ACC, fontWeight:700, letterSpacing:3, fontSize:12 }}>⚡ ALTSCALP HFT</div>
+          <div style={{ color:"#888", fontSize:10, marginTop:2 }}>Alta frecuencia · 15s · leverage variable</div>
+        </div>
+        <div style={{ textAlign:"right" }}>
+          <div style={{ color:"#ccc", fontFamily:"monospace", fontSize:15, fontWeight:700 }}>${(data.current_capital||0).toFixed(2)}</div>
+          <div style={{ color:(data.total_pnl||0)>=0?"#00ff88":"#ff4444", fontSize:11, fontFamily:"monospace" }}>{(data.total_pnl||0)>=0?"+":""}${(data.total_pnl||0).toFixed(2)} · {(data.win_rate||0).toFixed(1)}% WR</div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display:"flex", gap:6, marginBottom:14, flexWrap:"wrap" }}>
+        {T("positions","POSICIONES")} {T("scanner","SCANNER")} {T("trades","TRADES")} {T("stats","STATS")} {T("log","LOG")}
+      </div>
+
+      {/* POSICIONES */}
+      {tab==="positions" && (
+        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+          {positions.length===0
+            ? <div style={{ color:"#bbb", textAlign:"center", padding:24, fontSize:12 }}>Sin posiciones abiertas</div>
+            : positions.map((p,i)=>(
+              <div key={i} style={{ background:"rgba(0,204,255,0.04)", border:"1px solid rgba(0,204,255,0.15)", borderRadius:8, padding:"10px 14px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                    <Badge2 text={p.direction} color={p.direction==="LONG"?"#00ff88":"#ff4444"} />
+                    <span style={{ color:ACC, fontWeight:700, fontSize:12 }}>{p.symbol}</span>
+                    <Badge2 text={`${p.leverage}x`} color={ACC} />
+                  </div>
+                  <button onClick={()=>onClose(p)} style={{ background:"rgba(255,68,68,0.1)", border:"1px solid #ff444444", color:"#ff4444", borderRadius:5, padding:"3px 10px", cursor:"pointer", fontSize:10 }}>Cerrar</button>
+                </div>
+                <div style={{ display:"flex", gap:12, fontSize:10, color:"#888", fontFamily:"monospace", marginTop:6 }}>
+                  <span>entry <span style={{ color:"#ccc" }}>${p.entry_price?.toFixed?.(4)??p.entry_price}</span></span>
+                  <span>TP <span style={{ color:"#00ff88" }}>${p.take_profit?.toFixed?.(4)??p.take_profit}</span></span>
+                  <span>SL <span style={{ color:"#ff4444" }}>${p.stop_loss?.toFixed?.(4)??p.stop_loss}</span></span>
+                  <span>size <span style={{ color:ACC }}>${p.size_usdt?.toFixed?.(0)??p.size_usdt}</span></span>
+                </div>
+              </div>
+            ))
+          }
+        </div>
+      )}
+
+      {/* SCANNER */}
+      {tab==="scanner" && (
+        <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 80px 70px", gap:8, color:"#555", fontSize:9, letterSpacing:1, padding:"0 4px", marginBottom:4 }}>
+            <span>SYMBOL</span><span style={{ textAlign:"right" }}>VOL 24H</span><span style={{ textAlign:"right" }}>CAMBIO</span>
+          </div>
+          {(data.scanner_coins||[]).length===0
+            ? <div style={{ color:"#bbb", textAlign:"center", padding:24, fontSize:12 }}>Sin datos de scanner</div>
+            : (data.scanner_coins||[]).map((c,i)=>(
+              <div key={i} style={{ display:"grid", gridTemplateColumns:"1fr 80px 70px", gap:8, background:"rgba(255,255,255,0.02)", borderRadius:6, padding:"7px 10px", alignItems:"center" }}>
+                <span style={{ color:ACC, fontFamily:"monospace", fontSize:11 }}>{c.symbol}</span>
+                <span style={{ color:"#ccc", fontFamily:"monospace", fontSize:10, textAlign:"right" }}>${c.volume}M</span>
+                <span style={{ color:c.change_pct>3?"#00ff88":c.change_pct>1?"#ffcc00":"#bbb", fontFamily:"monospace", fontSize:10, textAlign:"right" }}>{c.change_pct?.toFixed?.(1)}%</span>
+              </div>
+            ))
+          }
+        </div>
+      )}
+
+      {/* TRADES */}
+      {tab==="trades" && (()=>{
+        const today = new Date().toISOString().slice(0,10);
+        const todayTrades = [...closed].filter(t=>(t.exit_time||t.entry_time||"").startsWith(today)).reverse();
+        const Row = ({t,i}) => (
+          <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"8px 12px", marginBottom:4 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+              <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
+                <Badge2 text={t.side} color={t.side==="LONG"?"#00ff88":"#ff4444"} />
+                <Badge2 text={t.exit_reason||"--"} color={t.exit_reason==="TAKE_PROFIT"?"#00ff88":t.exit_reason==="STOP_LOSS"?"#ff4444":"#bbb"} />
+                <span style={{ color:ACC, fontSize:11, fontWeight:700 }}>{t.symbol}</span>
+                <span style={{ color:"#888", fontSize:10 }}>{t.leverage}x</span>
+              </div>
+              <span style={{ color:t.pnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontWeight:700 }}>{t.pnl>=0?"+":""}${t.pnl?.toFixed(2)}</span>
+            </div>
+            <div style={{ display:"flex", gap:10, fontSize:10, color:"#666", fontFamily:"monospace", marginTop:3 }}>
+              {(t.exit_time||t.entry_time) && <span>{(t.exit_time||t.entry_time).slice(11,16)}</span>}
+              <span>${t.entry_price?.toFixed?.(4)} → ${t.exit_price?.toFixed?.(4)}</span>
+            </div>
+          </div>
+        );
+        return (
+          <div>
+            {todayTrades.length===0
+              ? <div style={{ color:"#bbb", textAlign:"center", padding:24 }}>Sin trades hoy</div>
+              : todayTrades.slice(0,15).map((t,i)=><Row key={i} t={t} i={i}/>)
+            }
+            {todayTrades.length>0 && (
+              <button style={verMasBtn} onClick={()=>setModal("trades")}>
+                Ver más... ({todayTrades.length} trades hoy)
+              </button>
+            )}
+            {modal==="trades" && (
+              <VerMasModal title={`ALTSCALP — TRADES HOY (${todayTrades.length})`} onClose={()=>setModal(null)}>
+                <div>{todayTrades.map((t,i)=><Row key={i} t={t} i={i}/>)}</div>
+              </VerMasModal>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* STATS */}
+      {tab==="stats" && (
+        <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+          {[
+            { label:"Capital inicial", value:`$${(data.initial_capital||0).toFixed(2)}` },
+            { label:"Capital actual",  value:`$${(data.current_capital||0).toFixed(2)}` },
+            { label:"P&L total",       value:`${(data.total_pnl||0)>=0?"+":""}$${Math.abs(data.total_pnl||0).toFixed(2)}`, color:(data.total_pnl||0)>=0?"#00ff88":"#ff4444" },
+            { label:"Win rate",        value:`${(data.win_rate||0).toFixed(1)}%`, color:"#ffcc00" },
+            { label:"Max drawdown",    value:`${(data.max_drawdown||0).toFixed(1)}%`, color:"#ff8c00" },
+            { label:"Trades totales",  value:(data.closed_trades||[]).length },
+          ].map((s,i)=>(
+            <div key={i} style={{ background:"rgba(255,255,255,0.02)", borderRadius:8, padding:"10px 14px" }}>
+              <div style={{ color:"#bbb", fontSize:10, marginBottom:4 }}>{s.label}</div>
+              <div style={{ color:s.color||"#ccc", fontFamily:"monospace", fontWeight:700 }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* LOG */}
+      {tab==="log" && (()=>{
+        const log2 = data.cycle_log||[];
+        const LogRow = ({e,i}) => (
+          <div key={i} style={{ display:"flex", gap:10, marginBottom:5 }}>
+            <span style={{ color:"#bbb", minWidth:50 }}>{e.time}</span>
+            <span style={{ color:e.msg?.includes("✅")?"#00ff88":e.msg?.includes("❌")?"#ff4444":e.msg?.includes("↗")||e.msg?.includes("AS-")?ACC:"#bbb" }}>{e.msg}</span>
+          </div>
+        );
+        return (
+          <div>
+            <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:8, padding:14, fontFamily:"monospace", fontSize:11 }}>
+              {log2.slice(0,20).map((e,i)=><LogRow key={i} e={e} i={i}/>)}
+            </div>
+            {log2.length>0 && (
+              <button style={verMasBtn} onClick={()=>setModal("log")}>
+                Ver más... ({log2.length} entradas)
+              </button>
+            )}
+            {modal==="log" && (
+              <VerMasModal title={`ALTSCALP — LOG (${log2.length})`} onClose={()=>setModal(null)}>
+                <div style={{ background:"rgba(0,0,0,0.3)", borderRadius:8, padding:14, fontFamily:"monospace", fontSize:11 }}>
+                  {log2.map((e,i)=><LogRow key={i} e={e} i={i}/>)}
+                </div>
+              </VerMasModal>
+            )}
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
 // ─── Panel Scalping ───────────────────────────────────────────────────────────
 function ScalpingPanel({ data, liveprices, onClose }) {
   const [tab, setTab] = useState("position");
@@ -925,8 +1098,9 @@ function CodeEditor({ files }) {
 
 // ─── Dashboard Principal ───────────────────────────────────────────────────────
 export default function Dashboard() {
-  const [scData, setScData]   = useState(() => lsLoad(LS_KEY.scalping,  MOCK_SC));
+  const [scData,  setScData]  = useState(() => lsLoad(LS_KEY.scalping,  MOCK_SC));
   const [altData, setAltData] = useState(() => lsLoad(LS_KEY.altcoins,  MOCK_ALT));
+  const [asData,  setAsData]  = useState(() => lsLoad("tbot_as", { bot:"altscalp", current_capital:200, initial_capital:200, total_pnl:0, win_rate:0, max_drawdown:0, positions:{}, closed_trades:[], cycle_log:[], scanner_coins:[] }));
   const [liveprices, setLivePrices] = useState({});
   const lastManualClose = useRef(0);
   const manuallyClosed = useRef(new Set());
@@ -957,8 +1131,9 @@ export default function Dashboard() {
         if (d && !d.error) { lsSave(lsKey, d); setter(d); }
       } catch {}
     };
-    await load("altcoins", "/altcoin_data/state.json",               setAltData,  LS_KEY.altcoins);
-    await load("scalping", "/paper_trading/scalping_state.json",     setScData,   LS_KEY.scalping);
+    await load("altcoins",  "/altcoin_data/state.json",                  setAltData, LS_KEY.altcoins);
+    await load("scalping",  "/paper_trading/scalping_state.json",       setScData,  LS_KEY.scalping);
+    await load("altscalp",  "/paper_trading/altscalp_state.json",       setAsData,  "tbot_as");
     setLastFetch(new Date().toLocaleTimeString("es-AR"));
   }, [lastManualClose, manuallyClosed]);
 
@@ -1087,8 +1262,8 @@ export default function Dashboard() {
   }, [setScData, setAltData, scData, altData, lastManualClose, manuallyClosed, liveprices]);
 
 
-  const totalPnl     = (scData.total_pnl||0) + (altData.total_pnl||0);
-  const totalCapital = (scData.current_capital||0) + (altData.current_capital||0);
+  const totalPnl     = (scData.total_pnl||0) + (altData.total_pnl||0) + (asData.total_pnl||0);
+  const totalCapital = (scData.current_capital||0) + (altData.current_capital||0) + (asData.current_capital||0);
 
   return (
     <div style={{ background:"#050508", minHeight:"100vh", color:"#ccc", fontFamily:"'Courier New', monospace", padding:"0 0 40px" }}>
@@ -1119,8 +1294,9 @@ export default function Dashboard() {
       {/* P&L Summary bar */}
       {(() => {
         const bots = [
-          { label:"SCALPING", color:"#ff9933", data:scData },
-          { label:"ALTCOINS", color:"#cc88ff", data:altData },
+          { label:"SCALPING",  color:"#ff9933", data:scData  },
+          { label:"ALTCOINS",  color:"#cc88ff", data:altData },
+          { label:"ALTSCALP",  color:"#00ccff", data:asData  },
         ];
         return (
           <div style={{ borderBottom:"1px solid rgba(255,255,255,0.06)", padding:"10px 28px", display:"flex", alignItems:"center", gap:0, background:"rgba(0,0,0,0.2)" }}>
@@ -1175,6 +1351,16 @@ export default function Dashboard() {
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, padding:"20px 28px 0" }}>
         <ScalpingPanel data={scData} liveprices={liveprices} onClose={(pos)=>closePosition("scalping", pos)} />
         <AltcoinPanel data={altData} liveprices={liveprices} onClose={(pos)=>closePosition("altcoin", pos)} />
+      </div>
+      {/* Bottom row: AltScalp HFT */}
+      <div style={{ padding:"20px 28px 0" }}>
+        <AltScalpPanel data={asData} onClose={(pos)=>{
+          if(!confirm(`¿Cerrar ${pos.symbol}?`)) return;
+          fetch("http://localhost:8082/state/altscalp").then(r=>r.json()).then(s=>{
+            if(s.positions?.[pos.symbol]) delete s.positions[pos.symbol];
+            return fetch("http://localhost:8082/state/altscalp",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(s)});
+          }).catch(console.error);
+        }} />
       </div>
 
       <div style={{ margin:"0 28px", padding:"12px 18px", background:"rgba(0,255,136,0.03)", border:"1px solid rgba(0,255,136,0.1)", borderRadius:10, fontSize:11, color:"#ccc" }}>
