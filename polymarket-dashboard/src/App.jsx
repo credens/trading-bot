@@ -346,6 +346,12 @@ function VerMasModal({ title, onClose, children }) {
 
 const verMasBtn = { background:"none", border:"1px solid rgba(255,255,255,0.08)", color:"#666", cursor:"pointer", fontSize:10, padding:"5px 0", borderRadius:5, marginTop:8, width:"100%", letterSpacing:1, fontFamily:"monospace" };
 
+// Fecha local YYYY-MM-DD (usa hora Argentina, no UTC)
+const localToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+};
+
 // ─── Panel Altcoins ────────────────────────────────────────────────────────────
 function AltcoinPanel({ data, liveprices, onClose }) {
   const [tab, setTab] = useState("positions");
@@ -522,7 +528,7 @@ function AltcoinPanel({ data, liveprices, onClose }) {
       )}
 
       {tab==="trades" && (() => {
-        const today = new Date().toISOString().slice(0,10);
+        const today = localToday();
         const todayTrades = [...closed].filter(t=>(t.exit_time||t.entry_time||"").startsWith(today)).reverse();
         const AltTradeRow = ({t,i}) => (
           <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"10px 14px", marginBottom:6 }}>
@@ -743,7 +749,7 @@ function AltScalpPanel({ data, onClose }) {
 
       {/* TRADES */}
       {tab==="trades" && (()=>{
-        const today = new Date().toISOString().slice(0,10);
+        const today = localToday();
         const todayTrades = [...closed].filter(t=>(t.exit_time||t.entry_time||"").startsWith(today)).reverse();
         const Row = ({t,i}) => (
           <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"8px 12px", marginBottom:4 }}>
@@ -998,7 +1004,7 @@ function ScalpingPanel({ data, liveprices, onClose }) {
       )}
 
       {tab==="trades" && (()=>{
-        const today = new Date().toISOString().slice(0,10);
+        const today = localToday();
         const todayTrades = [...closed].filter(t=>(t.exit_time||t.entry_time||"").startsWith(today)).reverse();
         const ScTradeRow = ({t,i}) => (
           <div key={i} style={{ background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.05)", borderRadius:8, padding:"10px 14px" }}>
