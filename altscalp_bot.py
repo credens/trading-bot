@@ -28,7 +28,7 @@ DRY_RUN       = os.getenv("DRY_RUN", "true").lower() == "true"
 CAPITAL       = float(os.getenv("ALTSCALP_CAPITAL", "200"))
 CYCLE_SEC     = int(os.getenv("ALTSCALP_CYCLE", "15"))
 MAX_POSITIONS = int(os.getenv("ALTSCALP_MAX_POS", "5"))
-SIZE_PCT      = float(os.getenv("ALTSCALP_SIZE", "0.12"))    # 12% por posición
+SIZE_PCT      = float(os.getenv("ALTSCALP_SIZE", "0.09"))    # 9% por posición (-25%)
 TP_PCT        = float(os.getenv("ALTSCALP_TP", "0.002"))     # 0.2% base
 SL_PCT        = float(os.getenv("ALTSCALP_SL", "0.0015"))    # 0.15% base
 TIME_LIMIT_S  = int(os.getenv("ALTSCALP_TIME", "90"))        # 90s max por trade
