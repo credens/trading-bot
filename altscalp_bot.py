@@ -41,7 +41,7 @@ HIGH_LIQ = {"ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","DOGEUSDT",
 MID_LIQ  = set()  # resto del top-30 → 20x
 # HIGH_LIQ → 50x | MID_LIQ/top-30 → 20x | resto → 10x
 
-MIN_VOLUME_USDT = 500_000_000   # $500M mínimo 24h
+MIN_VOLUME_USDT = 100_000_000   # $100M mínimo 24h
 TOP_N           = 30
 SCORE_THRESHOLD = MIN_SCORE
 
@@ -51,6 +51,7 @@ EXCLUDE = {
     "ALPHAUSDT","XAUTUSDT","1000SHIBUSDT","1000LUNCUSDT","1000PEPEUSDT",
     "HYPEUSDT","XAGUSDT","XAUUSDT","PAXGUSDT","LUNA2USDT",
     "DEFIUSDT","BNXUSDT","SIRENUSDT","LOOMUSDT","CVPUSDT","BALUSDT",
+    "币安人生USDT","ALPACAUSDT",
 }
 
 # ── State ─────────────────────────────────────────────────────────────────────
