@@ -47,7 +47,7 @@ MAX_POSITIONS    = int(os.getenv("ALTCOIN_MAX_POSITIONS","10"))
 TOTAL_CAPITAL    = float(os.getenv("ALTCOIN_CAPITAL",   "200"))
 DRY_RUN          = os.getenv("DRY_RUN", "true").lower() == "true"
 INTERVAL_MINUTES = int(os.getenv("ALTCOIN_INTERVAL",   "3"))
-MIN_VOLUME_USDT  = float(os.getenv("ALTCOIN_MIN_VOLUME","300000000"))
+MIN_VOLUME_USDT  = float(os.getenv("ALTCOIN_MIN_VOLUME","500000000"))  # $500M mínimo
 TOP_N            = int(os.getenv("ALTCOIN_TOP_N",       "30"))
 CANDLE_INTERVAL  = os.getenv("ALTCOIN_CANDLE", "5m")
 DEFAULT_SL_PCT   = float(os.getenv("ALTCOIN_SL",  "0.012"))     # SL fallback 1.2%
@@ -68,7 +68,10 @@ EXCLUDE = {"BUSDUSDT", "USDCUSDT", "TUSDUSDT", "USDTUSDT", "BTCUSDT",
            "BTCDOMUSDT", "DEFIUSDT", "BNXUSDT", "1000SHIBUSDT",
            "SIRENUSDT", "LOOMUSDT", "CVPUSDT", "BALUSDT",
            "1000LUNCUSDT", "LUNA2USDT", "ONTUSDT", "RIVERUSDT",
-           "HYPEUSDT", "XAGUSDT", "XAUUSDT", "PAXGUSDT", "1000PEPEUSDT"}
+           "HYPEUSDT", "XAGUSDT", "XAUUSDT", "PAXGUSDT", "1000PEPEUSDT",
+           # Coins problemáticas: baja liquidez real, gaps enormes
+           "BLESSUSDT", "RAVEUSDT", "CLUSDT", "ARIAUSDT", "ENJUSDT",
+           "ZECUSDT", "ALPHAUSDT", "XAUTUSDT"}
 
 # ─── PID Lock ────────────────────────────────────────────────────────────────
 
@@ -496,7 +499,7 @@ def check_positions(client, state, scenario=None):
             # ── 3. CONDICIONES DE CIERRE ──
             unrealized_pct = ((curr - entry_price)/entry_price if direction=="LONG" else (entry_price-curr)/entry_price) * lev
             hit_sl = (direction=="LONG" and curr <= sl) or (direction=="SHORT" and curr >= sl)
-            emergency = unrealized_pct < -0.07  # -7% del position levered = 0.35% precio
+            emergency = unrealized_pct < -0.05  # -5% del position levered = 0.25% precio
 
             entry_dt = _parse_dt(pos["entry_time"])
             minutes_open = (now - entry_dt).total_seconds() / 60
@@ -536,6 +539,16 @@ def run_cycle(client):
         save_state(state)
 
     now = datetime.now()
+
+    # Daily loss limit: si el P&L del día supera -5% del capital, pausar hasta mañana
+    today_str = now.strftime("%Y-%m-%d")
+    today_trades = [t for t in state.get("closed_trades", [])
+                    if (t.get("exit_time") or t.get("entry_time") or "").startswith(today_str)]
+    today_pnl = sum(t.get("pnl") or 0 for t in today_trades)
+    capital = state.get("current_capital", TOTAL_CAPITAL)
+    if today_pnl < -(capital * 0.05):
+        log.warning(f"  🛑 Daily loss limit alcanzado: {today_pnl:.2f} ({today_pnl/capital*100:.1f}%) — pausando hasta mañana")
+        return
 
     # Cooldown cleanup
     state["cooldowns"] = {s: t for s, t in state.get("cooldowns", {}).items()

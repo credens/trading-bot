@@ -500,6 +500,18 @@ def run_cycle(client, paper):
         paper.save()
         return
 
+    # 0. Daily loss limit: si el P&L del día supera -5% del capital, pausar hasta mañana
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_trades = [t for t in paper.state.closed_trades
+                    if (getattr(t, 'exit_time', None) or getattr(t, 'entry_time', None) or '').startswith(today_str)]
+    today_pnl = sum(getattr(t, 'pnl', 0) or 0 for t in today_trades)
+    cap = paper.state.current_capital or 200
+    if today_pnl < -(cap * 0.05):
+        log.warning(f"  🛑 Daily loss limit: {today_pnl:.2f} ({today_pnl/cap*100:.1f}%) — pausando hasta mañana")
+        paper.add_log(f"🛑 Daily loss limit {today_pnl:.2f}")
+        paper.save()
+        return
+
     # 0. Cierre manual desde dashboard
     try:
         raw = _json.loads(SCALPING_STATE.read_text()) if SCALPING_STATE.exists() else {}

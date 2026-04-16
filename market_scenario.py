@@ -125,7 +125,7 @@ def _trend_strong(direction, macro_gap, rsi_1h, atr_pct, adx):
         "bn_vote_threshold_with": 1,                     # 1/2 basta con la tendencia
         "bn_vote_threshold_against": 3,                   # necesita unanimidad contra
         # Scalping
-        "sc_regimes": ["TREND", "BREAKOUT"],              # sin RANGE
+        "sc_regimes": ["TREND", "BREAKOUT", "MIXED"],      # MIXED con-tendencia permitido
         "sc_tp_mult": 1.3,
         "sc_size_with": 0.22,
         "sc_size_against": 0.06,
