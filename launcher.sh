@@ -78,6 +78,13 @@ DR_PID=$!
 echo $DR_PID > "$SCRIPT_DIR/.dailyreport.pid"
 echo "✓ Daily report daemon iniciado (PID: $DR_PID)"
 
+# ─── Lanzar Telegram Commander ───────────────────────────────────────────────
+echo "Iniciando Telegram commander..."
+nohup $PYTHON telegram_commander.py >> "$LOG_FILE" 2>&1 &
+TC_PID=$!
+echo $TC_PID > "$SCRIPT_DIR/.telegram.pid"
+echo "✓ Telegram commander iniciado (PID: $TC_PID)"
+
 # ─── Lanzar Dashboard ─────────────────────────────────────────────────────────
 HAS_NODE=false
 if command -v node &> /dev/null && [ -d "$DASHBOARD_DIR/node_modules" ]; then
