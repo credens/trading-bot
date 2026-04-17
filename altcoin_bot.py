@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-LEVERAGE         = int(os.getenv("ALTCOIN_LEVERAGE",    "20"))
+LEVERAGE         = int(os.getenv("ALTCOIN_LEVERAGE",    "20"))  # base, sobreescrito dinámicamente
 MAX_POSITIONS    = int(os.getenv("ALTCOIN_MAX_POSITIONS","10"))
 TOTAL_CAPITAL    = float(os.getenv("ALTCOIN_CAPITAL",   "200"))
 DRY_RUN          = os.getenv("DRY_RUN", "true").lower() == "true"
@@ -72,6 +72,39 @@ EXCLUDE = {"BUSDUSDT", "USDCUSDT", "TUSDUSDT", "USDTUSDT", "BTCUSDT",
            # Coins problemáticas: baja liquidez real, gaps enormes
            "BLESSUSDT", "RAVEUSDT", "CLUSDT", "ARIAUSDT", "ENJUSDT",
            "ZECUSDT", "ALPHAUSDT", "XAUTUSDT"}
+
+# ─── Leverage Dinámico ───────────────────────────────────────────────────────
+
+def get_dynamic_leverage(scenario: dict, atr_pct: float, confidence: str) -> int:
+    """Leverage según contexto de mercado, volatilidad del coin y confianza de señal."""
+    scenario_name = scenario.get("name", "RANGE")
+
+    # Base por escenario de mercado
+    base = {
+        "TREND_STRONG":   20,
+        "TREND_MODERATE": 15,
+        "BREAKOUT":       12,
+        "RANGE":          10,
+        "VOLATILE":        5,
+        "CRASH":           3,
+    }.get(scenario_name, 10)
+
+    # Reducir por alta volatilidad del coin (ATR)
+    if atr_pct > 3.0:
+        base = max(3, int(base * 0.40))   # muy volátil → mínimo leverage
+    elif atr_pct > 2.0:
+        base = max(5, int(base * 0.55))
+    elif atr_pct > 1.0:
+        base = max(8, int(base * 0.75))
+
+    # Ajuste por confianza de señal
+    if confidence == "HIGH":
+        base = int(base * 1.25)
+    elif confidence == "MEDIUM":
+        base = int(base * 0.85)
+
+    return min(20, max(3, base))  # límite: 3x–20x
+
 
 # ─── PID Lock ────────────────────────────────────────────────────────────────
 
@@ -286,7 +319,8 @@ def analyze_altcoin(indicators, market_data, capital, open_pos, open_l, open_s, 
         "reasoning": f"Score {score:+d} | {' | '.join(sigs[:3])}",
         "stop_loss_pct": sl_pct, "take_profit_pct": tp_pct,
         "trailing_trigger": trail_trigger, "tp_callback": tp_callback,
-        "position_size_usdt": size
+        "position_size_usdt": size,
+        "atr_pct": indicators.get("atr_pct", 1.0),
     }
 
 # ─── State Management ────────────────────────────────────────────────────────
@@ -355,19 +389,24 @@ def add_log(state, msg):
 
 # ─── Trade Engine ────────────────────────────────────────────────────────────
 
-def open_position(client, state, symbol, analysis, indicators):
+def open_position(client, state, symbol, analysis, indicators, scenario=None):
     price, direction = indicators["price"], analysis["direction"]
     sl_pct = float(analysis.get("stop_loss_pct", DEFAULT_SL_PCT))
     tp_pct = float(analysis.get("take_profit_pct", DEFAULT_TP_PCT))
     sl = round(price * (1 - sl_pct) if direction == "LONG" else price * (1 + sl_pct), 8)
     tp = round(price * (1 + tp_pct) if direction == "LONG" else price * (1 - tp_pct), 8)
 
+    leverage = get_dynamic_leverage(
+        scenario or {}, analysis.get("atr_pct", 1.0), analysis["confidence"]
+    )
+    log.info(f"  📐 Leverage dinámico: {leverage}x (escenario:{(scenario or {}).get('name','?')} ATR:{analysis.get('atr_pct',0):.2f}% conf:{analysis['confidence']})")
+
     pos = {
         "symbol": symbol, "direction": direction, "strategy": analysis["strategy"],
         "entry_price": price, "entry_time": datetime.now().isoformat(),
         "size_usdt": analysis["position_size_usdt"], "stop_loss": sl, "take_profit": tp,
         "tp_trailing_active": False, "tp_peak_price": price, "best_price": price,
-        "leverage": LEVERAGE, "trailing_activated": False, "confidence": analysis["confidence"],
+        "leverage": leverage, "trailing_activated": False, "confidence": analysis["confidence"],
         "reasoning": analysis["reasoning"],
         "trailing_trigger": analysis.get("trailing_trigger", TRAILING_TRIGGER),
         "tp_callback": analysis.get("tp_callback", TP_CALLBACK_PCT)
@@ -663,7 +702,7 @@ def run_cycle(client):
         cd = state.get("cooldowns", {}).get(symbol)
         if cd and _parse_dt(cd) > datetime.now():
             continue
-        open_position(client, state, symbol, ana, inds)
+        open_position(client, state, symbol, ana, inds, scenario)
         capital = state.get("capital", capital)
         executed += 1
 

@@ -29,19 +29,18 @@ CAPITAL       = float(os.getenv("ALTSCALP_CAPITAL", "200"))
 CYCLE_SEC     = int(os.getenv("ALTSCALP_CYCLE", "15"))
 MAX_POSITIONS = int(os.getenv("ALTSCALP_MAX_POS", "5"))
 SIZE_PCT      = float(os.getenv("ALTSCALP_SIZE", "0.12"))    # 12% por posición
-TP_PCT        = float(os.getenv("ALTSCALP_TP", "0.002"))     # 0.2% base
-SL_PCT        = float(os.getenv("ALTSCALP_SL", "0.0015"))    # 0.15% base
-TIME_LIMIT_S  = int(os.getenv("ALTSCALP_TIME", "90"))        # 90s max por trade
-MIN_SCORE     = int(os.getenv("ALTSCALP_SCORE", "4"))
+TP_PCT        = float(os.getenv("ALTSCALP_TP", "0.004"))     # 0.4% base (era 0.2%)
+SL_PCT        = float(os.getenv("ALTSCALP_SL", "0.002"))     # 0.2% base (era 0.15%) → R:R 2:1
+TIME_LIMIT_S  = int(os.getenv("ALTSCALP_TIME", "180"))       # 180s max por trade (era 90s)
+MIN_SCORE     = int(os.getenv("ALTSCALP_SCORE", "5"))        # Score mínimo 5 (era 4)
 
-# Leverage por liquidez del coin
+# Leverage conservador — prioridad: no perder capital
 HIGH_LIQ = {"ETHUSDT","BNBUSDT","SOLUSDT","XRPUSDT","DOGEUSDT",
              "ADAUSDT","AVAXUSDT","DOTUSDT","LTCUSDT","LINKUSDT",
              "MATICUSDT","UNIUSDT","ATOMUSDT","NEARUSDT","APTUSDT"}
-MID_LIQ  = set()  # resto del top-30 → 20x
-# HIGH_LIQ → 50x | MID_LIQ/top-30 → 20x | resto → 10x
+# HIGH_LIQ → 15x | top-30 → 10x | resto → 5x (antes: 50x/20x/10x)
 
-MIN_VOLUME_USDT = 100_000_000   # $100M mínimo 24h
+MIN_VOLUME_USDT = 200_000_000   # $200M mínimo 24h (era $100M — más liquidez)
 TOP_N           = 30
 SCORE_THRESHOLD = MIN_SCORE
 
@@ -52,6 +51,10 @@ EXCLUDE = {
     "HYPEUSDT","XAGUSDT","XAUUSDT","PAXGUSDT","LUNA2USDT",
     "DEFIUSDT","BNXUSDT","SIRENUSDT","LOOMUSDT","CVPUSDT","BALUSDT",
     "币安人生USDT","ALPACAUSDT",
+    # Baja liquidez real — spreads amplios, slippage alto
+    "BASEDUSDT","PLAYUSDT","PIPPINUSDT","PORT3USDT","ORDIUSDT","BIOUSDT",
+    "NEIROUSDT","RIVERUSDT","TAOUSDT","TRUMPUSDT","TSLAUSDT","LINKUSDT",
+    "FILUSDT","DOGEUSDT",
 }
 
 # ── State ─────────────────────────────────────────────────────────────────────
@@ -122,10 +125,10 @@ def get_volatile_coins(client):
 
 def get_leverage(symbol, rank):
     if symbol in HIGH_LIQ:
-        return 50
+        return 15
     if rank < 15:
-        return 20
-    return 10
+        return 10
+    return 5
 
 # ── Indicadores Rápidos ────────────────────────────────────────────────────────
 def get_indicators(client, symbol):
@@ -332,13 +335,13 @@ def monitor_positions(client, state):
         tp        = pos["take_profit"]
         sl        = pos["stop_loss"]
 
-        # Trailing: mover SL a breakeven cuando ganamos 0.1%
+        # Trailing: mover SL a breakeven cuando ganamos 0.2% (era 0.1%)
         if not pos.get("breakeven"):
-            if direction == "LONG" and price >= entry * 1.001:
-                pos["stop_loss"] = sl = entry * 1.0003
+            if direction == "LONG" and price >= entry * 1.002:
+                pos["stop_loss"] = sl = entry * 1.0005  # breakeven + pequeño buffer
                 pos["breakeven"] = True
-            elif direction == "SHORT" and price <= entry * 0.999:
-                pos["stop_loss"] = sl = entry * 0.9997
+            elif direction == "SHORT" and price <= entry * 0.998:
+                pos["stop_loss"] = sl = entry * 0.9995
                 pos["breakeven"] = True
 
         # Actualizar best price
@@ -423,7 +426,7 @@ def run_cycle(client):
             if sym in state["positions"] or coin["change_pct"] < 0.5:
                 continue
             ind = get_indicators(client, sym)
-            if not ind or ind["vol_ratio"] < 1.3:
+            if not ind or ind["vol_ratio"] < 1.5:  # era 1.3 — señales más limpias
                 continue
             analyzed += 1
             direction, score = analyze_entry(ind)
