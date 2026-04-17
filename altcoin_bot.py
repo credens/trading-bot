@@ -538,12 +538,12 @@ def check_positions(client, state, scenario=None):
             # ── 3. CONDICIONES DE CIERRE ──
             unrealized_pct = ((curr - entry_price)/entry_price if direction=="LONG" else (entry_price-curr)/entry_price) * lev
             hit_sl = (direction=="LONG" and curr <= sl) or (direction=="SHORT" and curr >= sl)
-            emergency = unrealized_pct < -0.05  # -5% del position levered = 0.25% precio
+            emergency = unrealized_pct < -0.08  # -8% levered (era -5%) — más espacio al trade
 
             entry_dt = _parse_dt(pos["entry_time"])
             minutes_open = (now - entry_dt).total_seconds() / 60
             time_expired = minutes_open >= TIME_LIMIT_MIN
-            early_exit = minutes_open >= 30 and unrealized_pct < -0.05  # 30min + perdiendo >5%
+            early_exit = minutes_open >= 30 and unrealized_pct < -0.08  # 30min + perdiendo >8%
 
             if hit_sl or emergency or time_expired or early_exit:
                 if emergency:

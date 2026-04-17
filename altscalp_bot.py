@@ -446,8 +446,10 @@ def run_cycle(client):
                 continue
             lev  = get_leverage(sym, rank)
             atr  = ind["atr_pct"] / 100
-            tp   = max(TP_PCT, min(atr * 0.8, 0.005))
-            sl   = max(SL_PCT, min(atr * 0.5, 0.003))
+            # SL dinámico: 1.5x ATR, mín 0.3%, máx 0.6% — da espacio real al trade
+            sl   = round(max(0.003, min(atr * 1.5, 0.006)), 5)
+            # TP: R:R 2.5:1 sobre el SL real
+            tp   = round(sl * 2.5, 5)
             open_position(state, sym, direction, ind["price"], size, lev, tp, sl, score)
             log.info(f"    vol:{ind['vol_ratio']}x vel:{ind['velocity']:+.2f}% RSI:{ind['rsi']} BB:{ind['bb_pct']:.2f}")
 

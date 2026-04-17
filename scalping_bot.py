@@ -585,34 +585,9 @@ def run_cycle(client, paper):
 
     elif action == "FLAT":
         if open_trade:
-            min_hold_sec = scenario.get("sc_min_hold_sec", MIN_HOLD_SECS)
-            held_secs = (datetime.now() - datetime.fromisoformat(open_trade.entry_time[:19])).total_seconds()
-
-            if held_secs < min_hold_sec:
-                remaining = int(min_hold_sec - held_secs)
-                paper.add_log(f"HOLD forzado — min hold {remaining}s ({scenario['name']})")
-            else:
-                # Trailing stop activo (profit > 0.4%) → dejarlo trabajar
-                best = open_trade.best_price or open_trade.entry_price
-                profit = (best - open_trade.entry_price) / open_trade.entry_price if open_trade.side == "LONG" \
-                         else (open_trade.entry_price - best) / open_trade.entry_price
-                if profit > 0.004:
-                    paper.add_log(f"HOLD — trailing stop activo ({profit*100:.2f}% profit)")
-                else:
-                    # Cerrar si 2/3 señales flipparon contra la posición
-                    if open_trade.side == "LONG":
-                        flip = sum([ind["ema_trend"] == "bearish", ind["macd_hist"] < 0, ind["cvd_slope"] < 0])
-                    else:
-                        flip = sum([ind["ema_trend"] == "bullish", ind["macd_hist"] > 0, ind["cvd_slope"] > 0])
-
-                    if flip >= 2:
-                        paper.close_scalping_position(price, "SIGNAL")
-                        paper.state.last_signal_exit = datetime.now().isoformat()
-                        raw = _json.loads(SCALPING_STATE.read_text()) if SCALPING_STATE.exists() else {}
-                        raw["cooldown_until"] = (datetime.now() + timedelta(seconds=SIGNAL_COOLDOWN_SECS)).isoformat()
-                        SCALPING_STATE.write_text(_json.dumps(raw, indent=2))
-                    else:
-                        paper.add_log(f"SIGNAL parcial ({flip}/3 señales) — mantengo")
+            # No cerrar por señal — dejar que trailing stop y SL manejen la salida.
+            # El signal exit tenía WR 3% (129 trades en pérdida): más daño que beneficio.
+            paper.add_log(f"HOLD — salida por trailing/SL | {decision['reasoning'][:50]}")
         else:
             paper.add_log(f"FLAT — {decision['reasoning'][:60]}")
 
