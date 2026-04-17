@@ -665,12 +665,12 @@ def run_cycle(client, paper):
                 paper.open_scalping_trade(decision, price, capital, LEVERAGE)
 
     paper.save()
-    log.info(f"  Capital: ${paper.state.current_capital:.2f} | P&L: {paper.state.total_pnl:+.2f} | Win: {paper.state.win_rate:.0f}%")
+    pos_value = sum(t.size for t in paper.state.open_trades)
+    effective_capital = paper.state.current_capital + pos_value
+    log.info(f"  Capital: ${effective_capital:.2f} | P&L: {paper.state.total_pnl:+.2f} | Win: {paper.state.win_rate:.0f}%")
 
     # Drawdown check — usar capital + valor en posiciones abiertas
     from drawdown_monitor import check_drawdown
-    pos_value = sum(t.size for t in paper.state.open_trades)
-    effective_capital = paper.state.current_capital + pos_value
     check_drawdown("scalping", effective_capital, paper.state.initial_capital,
                    paper.state.peak_capital, SCALPING_STATE)
 
