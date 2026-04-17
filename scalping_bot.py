@@ -52,8 +52,8 @@ CYCLE_SECONDS  = int(os.getenv("SCALP_CYCLE_SECONDS", "30"))
 SL_PCT         = 0.008   # 0.8% mínimo
 TP_PCT         = 0.018   # 1.8% mínimo
 POS_PCT        = 0.15    # 15% del capital por trade
-MIN_HOLD_SECS  = 300     # 5 min mínimo antes de cerrar por SIGNAL
-SIGNAL_COOLDOWN_SECS = 180  # 3 min cooldown después de cerrar por SIGNAL
+MIN_HOLD_SECS  = 120     # 2 min mínimo antes de cerrar por SIGNAL (era 5 min)
+SIGNAL_COOLDOWN_SECS = 60   # 1 min cooldown después de cerrar por SIGNAL (era 3 min)
 
 BINANCE_API_KEY    = os.getenv("BINANCE_API_KEY")
 BINANCE_SECRET_KEY = os.getenv("BINANCE_SECRET_KEY")
@@ -277,7 +277,7 @@ def analyze(ind: dict, current_position: str, scenario=None) -> dict:
         }
 
     # ── Volatilidad extrema ────────────────────────────────────
-    if atr_pct > 0.5:
+    if atr_pct > 1.0:
         return make("FLAT", "MEDIUM", f"ATR alto ({atr_pct:.2f}%) — demasiado riesgo", ["Alta volatilidad"])
 
     # ── Gestión de posición existente ─────────────────────────
@@ -346,7 +346,7 @@ def analyze(ind: dict, current_position: str, scenario=None) -> dict:
 
         log.info(f"  [TREND ADX:{ind['adx']:.0f}] L:{long_score} S:{short_score} | EMA:{ind['ema_trend']} RSI:{rsi:.0f} CVD:{'↑' if ind['cvd_bullish'] else '↓'} Vol:{vol:.1f}x")
 
-        if long_score >= 4 and long_score > short_score:
+        if long_score >= 3 and long_score > short_score:
             # CVD diverge fuerte: BLOQUEAR trade
             if ind["cvd_divergence"] and not ind["cvd_bullish"]:
                 log.info(f"  ⛔ LONG bloqueado por CVD divergencia")
@@ -354,7 +354,7 @@ def analyze(ind: dict, current_position: str, scenario=None) -> dict:
             conf = "HIGH" if long_score >= 5 else "MEDIUM"
             return make("LONG", conf, f"TREND LONG score:{long_score} | {' | '.join(long_sigs[:3])}", long_sigs)
 
-        if short_score >= 4 and short_score > long_score:
+        if short_score >= 3 and short_score > long_score:
             # CVD diverge fuerte: BLOQUEAR trade
             if ind["cvd_divergence"] and not ind["cvd_bearish"]:
                 log.info(f"  ⛔ SHORT bloqueado por CVD divergencia")
@@ -587,57 +587,32 @@ def run_cycle(client, paper):
         if open_trade:
             min_hold_sec = scenario.get("sc_min_hold_sec", MIN_HOLD_SECS)
             held_secs = (datetime.now() - datetime.fromisoformat(open_trade.entry_time[:19])).total_seconds()
-            # Check if trade is in profit
-            if open_trade.side == "LONG":
-                in_profit = price > open_trade.entry_price
-            else:
-                in_profit = price < open_trade.entry_price
+
             if held_secs < min_hold_sec:
                 remaining = int(min_hold_sec - held_secs)
                 paper.add_log(f"HOLD forzado — min hold {remaining}s ({scenario['name']})")
-            elif in_profit:
-                # En profit → NO cerrar por SIGNAL, dejar que trailing stop haga su trabajo
-                paper.add_log(f"HOLD — en profit, trailing stop decide salida")
             else:
-                # FIX 3: Confluencia para SIGNAL exit
-                # Requiere 3/3 señales en condiciones normales.
-                # Si el ADX cayó ≥30% desde la entrada (tendencia debilitándose), basta con 2/3.
-                entry_adx = getattr(open_trade, "entry_adx", None)
-                regime_degraded = (
-                    entry_adx is not None and ind["adx"] < entry_adx * 0.70
-                )
-                required_signals = 2 if regime_degraded else 3
-
-                should_close = False
-                if open_trade.side == "LONG":
-                    bearish_count = sum([
-                        ind["ema_trend"] == "bearish",
-                        ind["macd_hist"] < 0,
-                        ind["cvd_slope"] < 0,
-                    ])
-                    if bearish_count >= required_signals:
-                        should_close = True
+                # Trailing stop activo (profit > 0.4%) → dejarlo trabajar
+                best = open_trade.best_price or open_trade.entry_price
+                profit = (best - open_trade.entry_price) / open_trade.entry_price if open_trade.side == "LONG" \
+                         else (open_trade.entry_price - best) / open_trade.entry_price
+                if profit > 0.004:
+                    paper.add_log(f"HOLD — trailing stop activo ({profit*100:.2f}% profit)")
                 else:
-                    bullish_count = sum([
-                        ind["ema_trend"] == "bullish",
-                        ind["macd_hist"] > 0,
-                        ind["cvd_slope"] > 0,
-                    ])
-                    if bullish_count >= required_signals:
-                        should_close = True
+                    # Cerrar si 2/3 señales flipparon contra la posición
+                    if open_trade.side == "LONG":
+                        flip = sum([ind["ema_trend"] == "bearish", ind["macd_hist"] < 0, ind["cvd_slope"] < 0])
+                    else:
+                        flip = sum([ind["ema_trend"] == "bullish", ind["macd_hist"] > 0, ind["cvd_slope"] > 0])
 
-                if regime_degraded and should_close:
-                    log.info(f"  ⚡ Exit anticipado — régimen degradado (ADX entry:{entry_adx:.0f} → ahora:{ind['adx']:.0f})")
-                
-                if should_close:
-                    paper.close_scalping_position(price, "SIGNAL")
-                    paper.state.last_signal_exit = datetime.now().isoformat()
-                    # FIX 4: Cooldown 3 min post-SIGNAL para evitar re-entry inmediato
-                    raw = _json.loads(SCALPING_STATE.read_text()) if SCALPING_STATE.exists() else {}
-                    raw["cooldown_until"] = (datetime.now() + timedelta(minutes=3)).isoformat()
-                    SCALPING_STATE.write_text(_json.dumps(raw, indent=2))
-                else:
-                    paper.add_log(f"SIGNAL parcial, no cierro (confluencia insuficiente)")
+                    if flip >= 2:
+                        paper.close_scalping_position(price, "SIGNAL")
+                        paper.state.last_signal_exit = datetime.now().isoformat()
+                        raw = _json.loads(SCALPING_STATE.read_text()) if SCALPING_STATE.exists() else {}
+                        raw["cooldown_until"] = (datetime.now() + timedelta(seconds=SIGNAL_COOLDOWN_SECS)).isoformat()
+                        SCALPING_STATE.write_text(_json.dumps(raw, indent=2))
+                    else:
+                        paper.add_log(f"SIGNAL parcial ({flip}/3 señales) — mantengo")
         else:
             paper.add_log(f"FLAT — {decision['reasoning'][:60]}")
 

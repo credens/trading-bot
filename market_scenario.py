@@ -125,11 +125,11 @@ def _trend_strong(direction, macro_gap, rsi_1h, atr_pct, adx):
         "bn_vote_threshold_with": 1,                     # 1/2 basta con la tendencia
         "bn_vote_threshold_against": 3,                   # necesita unanimidad contra
         # Scalping
-        "sc_regimes": ["TREND", "BREAKOUT", "MIXED"],      # MIXED con-tendencia permitido
+        "sc_regimes": ["TREND", "BREAKOUT", "MIXED", "RANGE"],  # RANGE permitido para mean reversion
         "sc_tp_mult": 1.3,
         "sc_size_with": 0.22,
         "sc_size_against": 0.06,
-        "sc_min_hold_sec": 600,                           # 10 min
+        "sc_min_hold_sec": 180,                           # 3 min (era 10 min)
         # Altcoins
         "alt_strategies": ["RANGE", "MOMENTUM"],          # sin MEAN_REVERSION
         "alt_tp_mult": 1.5,
@@ -158,7 +158,7 @@ def _trend_moderate(direction, macro_gap, rsi_1h, atr_pct, adx):
         "bn_min_hold_min": 5,
         "bn_vote_threshold_with": 1,                      # 1/3 HIGH basta
         "bn_vote_threshold_against": 3,                    # necesita unanimidad
-        "sc_regimes": ["TREND", "BREAKOUT", "MIXED"],     # sin RANGE
+        "sc_regimes": ["TREND", "BREAKOUT", "MIXED", "RANGE"],
         "sc_tp_mult": 1.1,
         "sc_size_with": 0.18,
         "sc_size_against": 0.07,
