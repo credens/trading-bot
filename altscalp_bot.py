@@ -245,9 +245,9 @@ def analyze_entry(ind):
     # RSI<35 = oversold → bloquear SHORT (precio probablemente rebota)
     # RSI>65 = overbought → bloquear LONG (precio probablemente cae)
     rsi = ind["rsi"]
-    if rsi < 35 and long_score <= short_score:
+    if rsi < 25 and long_score <= short_score:
         return "FLAT", max(long_score, short_score)
-    if rsi > 65 and short_score <= long_score:
+    if rsi > 75 and short_score <= long_score:
         return "FLAT", max(long_score, short_score)
 
     # Necesita ventaja de al menos 2 puntos sobre la dirección contraria
@@ -451,14 +451,16 @@ def run_cycle(client):
 
         entries.sort(key=lambda x: x[0], reverse=True)
         cap = state["current_capital"]   # actualizado tras cierres
+        open_pos_value = sum(p.get("size_usdt", 0) for p in state["positions"].values())
+        effective_cap = cap + open_pos_value  # capital total (cash + posiciones abiertas)
         if not entries:
             log.debug(f"  Sin entradas (analizados:{analyzed} slots:{slots})")
 
         for score, rank, direction, coin, ind in entries[:slots]:
             sym  = coin["symbol"]
-            size = round(cap * SIZE_PCT, 2)
+            size = round(effective_cap * SIZE_PCT, 2)  # tamaño fijo del capital total
             if size < 5 or cap < size:
-                log.warning(f"  ⚠ Capital insuficiente para entrada: ${cap:.1f} × {SIZE_PCT*100:.0f}% = ${size:.1f} < $5")
+                log.warning(f"  ⚠ Capital insuficiente para entrada: ${cap:.1f} cash < ${size:.1f} (15%×${effective_cap:.0f})")
                 continue
             lev  = get_leverage(sym, rank)
             atr  = ind["atr_pct"] / 100

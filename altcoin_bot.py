@@ -293,10 +293,10 @@ def analyze_altcoin(indicators, market_data, capital, open_pos, open_l, open_s, 
         avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 1
         avg_loss = abs(sum(t["pnl"] for t in losses) / len(losses)) if losses else 1
         b = avg_win / avg_loss if avg_loss > 0 else 1
-        kelly = max(0.08, min(0.35, win_rate - (1 - win_rate) / b))  # clamped 8%-35%
+        kelly = max(0.12, min(0.35, win_rate - (1 - win_rate) / b))  # clamped 12%-35%
         max_position = capital * kelly
     else:
-        max_position = capital / 10  # fallback
+        max_position = capital / 5  # fallback $40 en vez de $20
 
     size = round(max_position * (1.0 if conf == "HIGH" else 0.7), 2)
     if size < 15: size = 15
@@ -448,11 +448,11 @@ def _close_position(state, symbol, pos, exit_price, exit_reason, note=""):
     # Cooldown post-cierre negativo
     if pnl < 0:
         if exit_reason == "EMERGENCY":
-            cd_min = 90   # 90 min por EMERGENCY (pump/dump protection)
+            cd_min = 30
         elif exit_reason in ("STOP_LOSS", "EARLY_EXIT"):
-            cd_min = 10
-        else:
             cd_min = 5
+        else:
+            cd_min = 2
         state.setdefault("cooldowns", {})[symbol] = (datetime.now() + timedelta(minutes=cd_min)).isoformat()
 
     if symbol in state["positions"]:
