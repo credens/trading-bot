@@ -19,10 +19,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [ALTSC] %(message)s",
     datefmt="%H:%M:%S",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("altscalp.log"),
-    ]
+    handlers=[logging.FileHandler("altscalp.log")],
 )
 log = logging.getLogger(__name__)
 

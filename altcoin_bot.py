@@ -40,10 +40,7 @@ load_dotenv(override=True)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler("altcoin.log"),
-    ]
+    handlers=[logging.FileHandler("altcoin.log")],
 )
 log = logging.getLogger(__name__)
 
