@@ -656,14 +656,20 @@ function AltScalpPanel({ data, liveprices, onClose }) {
       </div>
 
       {/* Stats bar */}
-      <div style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
-        <Stat label="Capital"   value={`$${(data.current_capital||0).toFixed(2)}`} />
-        <PnlDisplay pnl={data.total_pnl||0} pct={data.total_pnl_pct||0} />
-        <Stat label="Win Rate"  value={`${(data.win_rate||0).toFixed(0)}%`} color="#ffcc00" />
-        <Stat label="Abiertas"  value={positions.length} color={ACC} size={20} />
-        <Stat label="Trades"    value={(data.closed_trades||[]).length} color="#bbb" size={20} />
-        <Stat label="Max DD"    value={`${(data.max_drawdown||0).toFixed(1)}%`} color="#ff8c00" size={16} />
-      </div>
+      {(() => {
+        const posValue = positions.reduce((s,p)=>s+(p.size||0),0);
+        const effectiveCap = (data.current_capital||0) + posValue;
+        return (
+          <div style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
+            <Stat label="Capital"   value={`$${effectiveCap.toFixed(2)}`} />
+            <PnlDisplay pnl={data.total_pnl||0} pct={data.total_pnl_pct||0} />
+            <Stat label="Win Rate"  value={`${(data.win_rate||0).toFixed(0)}%`} color="#ffcc00" />
+            <Stat label="Abiertas"  value={positions.length} color={ACC} size={20} />
+            <Stat label="Trades"    value={(data.closed_trades||[]).length} color="#bbb" size={20} />
+            <Stat label="Max DD"    value={`${(data.max_drawdown||0).toFixed(1)}%`} color="#ff8c00" size={16} />
+          </div>
+        );
+      })()}
 
       {/* Tabs */}
       <div style={{ display:"flex", gap:6, marginBottom:14, flexWrap:"wrap" }}>
@@ -931,12 +937,18 @@ function ScalpingPanel({ data, liveprices, onClose }) {
         </div>
       </div>
 
-      <div style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
-        <Stat label="Capital"  value={`$${(data.current_capital||0).toFixed(2)}`} />
-        <PnlDisplay pnl={data.total_pnl||0} pct={data.total_pnl_pct||0} />
-        <Stat label="RSI 1m"   value={data.rsi?.toFixed(1)||"--"} color={data.rsi<30?"#00ff88":data.rsi>70?"#ff4444":"#ccc"} />
-        <Stat label="Win rate" value={`${(data.win_rate||0).toFixed(0)}%`} color="#ffcc00" size={18} />
-      </div>
+      {(() => {
+        const posValue = (data.open_trades||[]).reduce((s,t)=>s+(t.size||0),0);
+        const effectiveCap = (data.current_capital||0) + posValue;
+        return (
+          <div style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
+            <Stat label="Capital"  value={`$${effectiveCap.toFixed(2)}`} />
+            <PnlDisplay pnl={data.total_pnl||0} pct={data.total_pnl_pct||0} />
+            <Stat label="RSI 1m"   value={data.rsi?.toFixed(1)||"--"} color={data.rsi<30?"#00ff88":data.rsi>70?"#ff4444":"#ccc"} />
+            <Stat label="Win rate" value={`${(data.win_rate||0).toFixed(0)}%`} color="#ffcc00" size={18} />
+          </div>
+        );
+      })()}
 
       {openTrade && (
         <div style={{ background:`${posColor}11`, border:`1px solid ${posColor}33`, borderRadius:10, padding:"12px 16px", marginBottom:14 }}>
