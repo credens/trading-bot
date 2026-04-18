@@ -657,7 +657,7 @@ function AltScalpPanel({ data, liveprices, onClose }) {
 
       {/* Stats bar */}
       {(() => {
-        const posValue = positions.reduce((s,p)=>s+(p.size||0),0);
+        const posValue = positions.reduce((s,p)=>s+(p.size_usdt||p.size||0),0);
         const effectiveCap = (data.current_capital||0) + posValue;
         return (
           <div style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
