@@ -241,6 +241,15 @@ def analyze_entry(ind):
     if ind["ema_bull"]:  long_score  += 1
     else:                short_score += 1
 
+    # Filtro RSI: no entrar en la dirección opuesta a los extremos
+    # RSI<35 = oversold → bloquear SHORT (precio probablemente rebota)
+    # RSI>65 = overbought → bloquear LONG (precio probablemente cae)
+    rsi = ind["rsi"]
+    if rsi < 35 and long_score <= short_score:
+        return "FLAT", max(long_score, short_score)
+    if rsi > 65 and short_score <= long_score:
+        return "FLAT", max(long_score, short_score)
+
     # Necesita ventaja de al menos 2 puntos sobre la dirección contraria
     if long_score >= SCORE_THRESHOLD and long_score > short_score + 1:
         return "LONG", long_score
