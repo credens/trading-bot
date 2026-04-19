@@ -550,14 +550,14 @@ def check_positions(client, state, scenario=None):
             early_exit = minutes_open >= 30 and unrealized_pct < -0.08  # 30min + perdiendo >8%
 
             if hit_sl or emergency or time_expired or early_exit:
-                if emergency:
+                if hit_sl:
+                    exit_reason = "STOP_LOSS"   # SL tiene prioridad — si el precio lo cruzó, es SL
+                elif emergency:
                     exit_reason = "EMERGENCY"
                 elif early_exit:
                     exit_reason = "EARLY_EXIT"
-                elif time_expired:
-                    exit_reason = "TIME_LIMIT"
                 else:
-                    exit_reason = "STOP_LOSS"
+                    exit_reason = "TIME_LIMIT"
                 to_close.append((symbol, curr, exit_reason, ""))
             else:
                 state["positions"][symbol] = pos  # guardar updates de best_price/peak
@@ -614,6 +614,21 @@ def run_cycle(client):
 
     from market_scenario import detect_scenario, is_with_trend
     scenario = detect_scenario(client)
+
+    # Override: si BTC cayó >1.5% en las últimas 8h, el EMA-50/200 es lento
+    # y puede marcar "bullish" cuando el mercado ya giró. Forzar neutral.
+    try:
+        kl = client.futures_klines(symbol="BTCUSDT", interval="4h", limit=3)
+        btc_chg = (float(kl[-1][4]) - float(kl[0][4])) / float(kl[0][4])
+        if btc_chg < -0.015 and scenario["direction"] == "bullish":
+            scenario = {**scenario, "direction": "neutral", "alt_block_counter": False}
+            log.info(f"  ⚠ BTC {btc_chg*100:+.1f}% en 8h — escenario override: neutral (EMA lag)")
+        elif btc_chg > 0.015 and scenario["direction"] == "bearish":
+            scenario = {**scenario, "direction": "neutral", "alt_block_counter": False}
+            log.info(f"  ⚠ BTC {btc_chg*100:+.1f}% en 8h — escenario override: neutral (EMA lag)")
+    except Exception:
+        pass
+
     check_positions(client, state, scenario)
 
     capital = state.get("capital", TOTAL_CAPITAL)

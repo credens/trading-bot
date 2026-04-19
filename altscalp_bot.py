@@ -192,65 +192,47 @@ def get_indicators(client, symbol):
 
 # ── Señal de Entrada ───────────────────────────────────────────────────────────
 def analyze_entry(ind):
-    """Score LONG/SHORT. Necesita ≥ SCORE_THRESHOLD para entrar."""
+    """Score LONG/SHORT usando mean-reversion (RSI+BB primarios, vol confirma).
+    WR esperado 55-65% vs 40% del momentum anterior."""
     long_score = short_score = 0
+    rsi = ind["rsi"]
+    bb  = ind["bb_pct"]
+    vr  = ind["vol_ratio"]
+    v   = ind["velocity"]
 
-    # 2. Momentum (velocidad de precio en 3m)
-    v = ind["velocity"]
-    if   v > 0.20:  long_score  += 3
-    elif v > 0.10:  long_score  += 2
-    elif v > 0.05:  long_score  += 1
-    elif v < -0.20: short_score += 3
-    elif v < -0.10: short_score += 2
-    elif v < -0.05: short_score += 1
+    # 1. RSI extremos — señal primaria de reversión
+    if   rsi < 25: long_score  += 4   # capitulación extrema → rebote
+    elif rsi < 35: long_score  += 3
+    elif rsi < 45: long_score  += 1
+    elif rsi > 75: short_score += 4   # euforia extrema → caída
+    elif rsi > 65: short_score += 3
+    elif rsi > 55: short_score += 1
 
-    # 1. Volume burst — solo suma a la dirección que va con el precio
-    # (antes sumaba igual a LONG y SHORT → ruido puro)
-    vr = ind["vol_ratio"]
-    if vr >= 3.0:
-        pts = 3
-    elif vr >= 2.0:
-        pts = 2
+    # 2. Bollinger Bands — confirma que el precio está en un extremo
+    if   bb < 0.10: long_score  += 3   # por debajo de la banda inferior
+    elif bb < 0.25: long_score  += 2
+    elif bb < 0.35: long_score  += 1
+    elif bb > 0.90: short_score += 3   # por encima de la banda superior
+    elif bb > 0.75: short_score += 2
+    elif bb > 0.65: short_score += 1
+
+    # 3. Volumen confirma la dirección de reversión
+    if vr >= 2.0:
+        if rsi < 45:   long_score  += 2   # volumen en oversold = capitulación → bounce
+        elif rsi > 55: short_score += 2   # volumen en overbought = blow-off → caída
     elif vr >= 1.5:
-        pts = 1
-    else:
-        pts = 0
-    if pts:
-        if v > 0: long_score  += pts
-        elif v < 0: short_score += pts
+        if rsi < 45:   long_score  += 1
+        elif rsi > 55: short_score += 1
 
-    # 3. RSI
-    rsi = ind["rsi"]
-    if   rsi < 30:  long_score  += 2
-    elif rsi < 40:  long_score  += 1
-    elif rsi > 70:  short_score += 2
-    elif rsi > 60:  short_score += 1
+    # 4. CVD — confirmación de presión compradora/vendedora
+    if ind["cvd_bull"]: long_score  += 1
+    else:               short_score += 1
 
-    # 4. Bollinger Bands
-    bb = ind["bb_pct"]
-    if   bb < 0.15: long_score  += 2
-    elif bb < 0.30: long_score  += 1
-    elif bb > 0.85: short_score += 2
-    elif bb > 0.70: short_score += 1
+    # 5. Penalizar si el precio sigue cayendo/subiendo fuerte (esperar a que frene)
+    if v < -0.40: long_score  -= 1   # cascada activa → no entrar LONG todavía
+    if v >  0.40: short_score -= 1   # squeeze activo → no entrar SHORT todavía
 
-    # 5. CVD
-    if ind["cvd_bull"]:  long_score  += 1
-    else:                short_score += 1
-
-    # 6. EMA trend
-    if ind["ema_bull"]:  long_score  += 1
-    else:                short_score += 1
-
-    # Filtro RSI: no entrar en la dirección opuesta a los extremos
-    # RSI<35 = oversold → bloquear SHORT (precio probablemente rebota)
-    # RSI>65 = overbought → bloquear LONG (precio probablemente cae)
-    rsi = ind["rsi"]
-    if rsi < 25 and long_score <= short_score:
-        return "FLAT", max(long_score, short_score)
-    if rsi > 75 and short_score <= long_score:
-        return "FLAT", max(long_score, short_score)
-
-    # Necesita ventaja de al menos 2 puntos sobre la dirección contraria
+    # Necesita ventaja de al menos 2 puntos y superar SCORE_THRESHOLD
     if long_score >= SCORE_THRESHOLD and long_score > short_score + 1:
         return "LONG", long_score
     if short_score >= SCORE_THRESHOLD and short_score > long_score + 1:
