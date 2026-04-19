@@ -299,7 +299,7 @@ def analyze_altcoin(indicators, market_data, capital, open_pos, open_l, open_s, 
         max_position = capital / 5  # fallback $40 en vez de $20
 
     size = round(max_position * (1.0 if conf == "HIGH" else 0.7), 2)
-    if size < 15: size = 15
+    size = max(size, round(capital * 0.10, 2))  # mínimo 10% del capital disponible
 
     strategy = "EMA_CROSS" if indicators["cross_bullish"] or indicators["cross_bearish"] else \
                "MEAN_REVERSION" if rsi < 30 or rsi > 70 else \
