@@ -589,7 +589,7 @@ def run_cycle(client):
                     if (t.get("exit_time") or t.get("entry_time") or "").startswith(today_str)]
     today_pnl = sum(t.get("pnl") or 0 for t in today_trades)
     capital = state.get("current_capital", TOTAL_CAPITAL)
-    if today_pnl < -(capital * 0.05):
+    if today_pnl < -(capital * 0.20):
         log.warning(f"  🛑 Daily loss limit alcanzado: {today_pnl:.2f} ({today_pnl/capital*100:.1f}%) — pausando hasta mañana")
         return
 
