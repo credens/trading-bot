@@ -733,7 +733,7 @@ def run_cycle(client):
     # Drawdown check — usar capital + valor en posiciones abiertas
     from drawdown_monitor import check_drawdown
     pos_value = sum(abs(p.get("size_usdt", 0)) for p in state.get("positions", {}).values())
-    effective_capital = state.get("capital", TOTAL_CAPITAL) + pos_value
+    effective_capital = state.get("current_capital", state.get("capital", TOTAL_CAPITAL)) + pos_value
     check_drawdown("altcoins", effective_capital, TOTAL_CAPITAL,
                    state.get("peak_capital", TOTAL_CAPITAL), STATE_FILE)
 

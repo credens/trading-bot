@@ -228,9 +228,13 @@ def analyze_entry(ind):
     if ind["cvd_bull"]: long_score  += 1
     else:               short_score += 1
 
-    # 5. Penalizar si el precio sigue cayendo/subiendo fuerte (esperar a que frene)
-    if v < -0.40: long_score  -= 1   # cascada activa → no entrar LONG todavía
-    if v >  0.40: short_score -= 1   # squeeze activo → no entrar SHORT todavía
+    # 5. Gate de velocidad: esperar a que el precio se estabilice antes de entrar
+    # En mean-reversion NO se entra mientras el precio sigue moviéndose fuerte
+    # en la dirección que queremos revertir ("cuchillo cayendo")
+    if long_score > short_score and v < -0.15:
+        return "FLAT", max(long_score, short_score)  # precio aún bajando → esperar
+    if short_score > long_score and v > 0.15:
+        return "FLAT", max(long_score, short_score)  # precio aún subiendo → esperar
 
     # Necesita ventaja de al menos 2 puntos y superar SCORE_THRESHOLD
     if long_score >= SCORE_THRESHOLD and long_score > short_score + 1:
