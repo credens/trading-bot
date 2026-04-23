@@ -192,56 +192,55 @@ def get_indicators(client, symbol):
 
 # ── Señal de Entrada ───────────────────────────────────────────────────────────
 def analyze_entry(ind):
-    """Score LONG/SHORT usando mean-reversion (RSI+BB primarios, vol confirma).
-    WR esperado 55-65% vs 40% del momentum anterior."""
+    """
+    Score LONG/SHORT híbrido: Mean-Reversion + Momentum Breakout.
+    Busca rebotes en extremos O seguir la fuerza en explosiones.
+    """
     long_score = short_score = 0
     rsi = ind["rsi"]
     bb  = ind["bb_pct"]
     vr  = ind["vol_ratio"]
-    v   = ind["velocity"]
+    vel = ind["velocity"]
+    
+    # --- MODO 1: MEAN REVERSION (Rebotes) ---
+    if rsi < 25: long_score += 4
+    elif rsi < 35: long_score += 2
+    
+    if rsi > 75: short_score += 4
+    elif rsi > 65: short_score += 2
+    
+    if bb < 0.05: long_score += 3
+    elif bb > 0.95: short_score += 3
 
-    # 1. RSI extremos — señal primaria de reversión
-    if   rsi < 25: long_score  += 4   # capitulación extrema → rebote
-    elif rsi < 35: long_score  += 3
-    elif rsi < 45: long_score  += 1
-    elif rsi > 75: short_score += 4   # euforia extrema → caída
-    elif rsi > 65: short_score += 3
-    elif rsi > 55: short_score += 1
+    # --- MODO 2: MOMENTUM BREAKOUT (Máxima Ganancia) ---
+    # Si el volumen es masivo (>3x) y el precio rompe con fuerza, seguimos el movimiento
+    if vr > 3.0:
+        if vel > 0.5: # Subida explosiva
+            long_score += 5
+            log.debug("  🚀 Momentum LONG detectado")
+        elif vel < -0.5: # Caída explosiva
+            short_score += 5
+            log.debug("  📉 Momentum SHORT detectado")
 
-    # 2. Bollinger Bands — confirma que el precio está en un extremo
-    if   bb < 0.10: long_score  += 3   # por debajo de la banda inferior
-    elif bb < 0.25: long_score  += 2
-    elif bb < 0.35: long_score  += 1
-    elif bb > 0.90: short_score += 3   # por encima de la banda superior
-    elif bb > 0.75: short_score += 2
-    elif bb > 0.65: short_score += 1
+    # Confirmación por EMA y CVD
+    if ind["ema_bull"] and vel > 0: long_score += 1
+    if not ind["ema_bull"] and vel < 0: short_score += 1
+    
+    if ind["cvd_bull"]: long_score += 1
+    else: short_score += 1
 
-    # 3. Volumen confirma la dirección de reversión
-    if vr >= 2.0:
-        if rsi < 45:   long_score  += 2   # volumen en oversold = capitulación → bounce
-        elif rsi > 55: short_score += 2   # volumen en overbought = blow-off → caída
-    elif vr >= 1.5:
-        if rsi < 45:   long_score  += 1
-        elif rsi > 55: short_score += 1
+    # Gate de seguridad para Mean Reversion (no atrapar cuchillos cayendo)
+    # Solo aplica si la señal principal NO es de momentum explosivo
+    if vr < 3.0:
+        if long_score > short_score and vel < -0.3: return "FLAT", 0
+        if short_score > long_score and vel > 0.3: return "FLAT", 0
 
-    # 4. CVD — confirmación de presión compradora/vendedora
-    if ind["cvd_bull"]: long_score  += 1
-    else:               short_score += 1
-
-    # 5. Gate de velocidad: esperar a que el precio se estabilice antes de entrar
-    # En mean-reversion NO se entra mientras el precio sigue moviéndose fuerte
-    # en la dirección que queremos revertir ("cuchillo cayendo")
-    if long_score > short_score and v < -0.15:
-        return "FLAT", max(long_score, short_score)  # precio aún bajando → esperar
-    if short_score > long_score and v > 0.15:
-        return "FLAT", max(long_score, short_score)  # precio aún subiendo → esperar
-
-    # Necesita ventaja de al menos 2 puntos y superar SCORE_THRESHOLD
     if long_score >= SCORE_THRESHOLD and long_score > short_score + 1:
         return "LONG", long_score
     if short_score >= SCORE_THRESHOLD and short_score > long_score + 1:
         return "SHORT", short_score
-    return "FLAT", max(long_score, short_score)
+    
+    return "FLAT", 0
 
 # ── Gestión de Posiciones ──────────────────────────────────────────────────────
 def open_position(state, symbol, direction, price, size_usdt, leverage, tp_pct, sl_pct, score):

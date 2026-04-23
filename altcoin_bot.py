@@ -1,4 +1,6 @@
 """
+
+
 Multi-Altcoin Adaptive Bot - v4.0 (BUG FIXES + IMPROVEMENTS)
 =============================================================
 - PID Lock: Solo 1 instancia puede correr a la vez.
@@ -194,9 +196,24 @@ def get_indicators(client, symbol: str) -> Optional[dict]:
         sma20, std20 = close.rolling(20).mean(), close.rolling(20).std()
         std_val = std20.iloc[-1]
         bb_pct = float(((close.iloc[-1] - (sma20.iloc[-1] - 2*std_val)) / (4*std_val))) if std_val > 0 else 0.5
+        
+        # Squeeze Detection: Ancho de banda (BB Width)
+        bb_width = float((4 * std_val) / sma20.iloc[-1]) if sma20.iloc[-1] > 0 else 0
+        bb_width_avg = (4 * std20 / sma20).rolling(20).mean().iloc[-1]
+        is_squeeze = bb_width < bb_width_avg * 0.8  # Volatilidad 20% menor al promedio reciente
 
         tr = pd.concat([high-low, (high-close.shift()).abs(), (low-close.shift()).abs()], axis=1).max(axis=1)
-        atr_pct = float(tr.rolling(14).mean().iloc[-1] / close.iloc[-1] * 100)
+        atr_val = tr.rolling(14).mean().iloc[-1]
+        atr_pct = float(atr_val / close.iloc[-1] * 100)
+
+        # ADX básico para fuerza de tendencia
+        plus_dm = (high.diff().clip(lower=0))
+        minus_dm = (-low.diff().clip(lower=0))
+        tr14 = tr.rolling(14).mean()
+        plus_di = 100 * (plus_dm.rolling(14).mean() / tr14)
+        minus_di = 100 * (minus_dm.rolling(14).mean() / tr14)
+        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+        adx = dx.rolling(14).mean().iloc[-1]
 
         v_mean = volume.rolling(20).mean().iloc[-1]
         vol_ratio = float(volume.iloc[-1] / v_mean) if v_mean > 0 else 1.0
@@ -215,7 +232,8 @@ def get_indicators(client, symbol: str) -> Optional[dict]:
             "cross_bullish": cross_bull, "cross_bearish": cross_bear,
             "vwap": round(vwap, 6), "price_vs_vwap": round(p_vs_v, 3),
             "rsi": round(rsi, 2), "macd_hist": round(macd_h, 6), "macd_cross": macd_c,
-            "bb_pct": round(bb_pct, 3), "atr_pct": round(atr_pct, 3),
+            "bb_pct": round(bb_pct, 3), "bb_width": bb_width, "is_squeeze": is_squeeze,
+            "adx": adx, "atr_pct": round(atr_pct, 3),
             "vol_ratio": round(vol_ratio, 2),
             "trend": "bullish" if ema50 > ema200 else "bearish",
             "funding_rate": funding_rate
@@ -230,7 +248,25 @@ def analyze_altcoin(indicators, market_data, capital, open_pos, open_l, open_s, 
     score = 0
     sigs = []
 
-    # ── Señales primarias: EMA cross + VWAP ──
+    # ── 1. Breakout & Volatility (High Potential) ──
+    # Si hay un squeeze y el precio rompe una banda, es una señal de alta probabilidad de movimiento explosivo
+    if indicators.get("is_squeeze"):
+        if indicators["bb_pct"] > 0.8:
+            score += 4
+            sigs.append("Squeeze Breakout UP")
+        elif indicators["bb_pct"] < 0.2:
+            score -= 4
+            sigs.append("Squeeze Breakout DOWN")
+    
+    # ADX: Si ADX > 25, la tendencia es fuerte. Si ADX > 40, es parabólica.
+    adx = indicators.get("adx", 0)
+    if adx > 25:
+        score += 1 if indicators["ema_trend"] == "bullish" else -1
+        if adx > 40:
+            score += 1 if indicators["ema_trend"] == "bullish" else -1
+            sigs.append(f"Strong Trend (ADX {adx:.0f})")
+
+    # ── 2. Señales primarias: EMA cross + VWAP ──
     if indicators["cross_bullish"]: score += 3; sigs.append("EMA Cross Up")
     elif indicators["ema_trend"] == "bullish": score += 1
 
@@ -241,50 +277,53 @@ def analyze_altcoin(indicators, market_data, capital, open_pos, open_l, open_s, 
     if pvwap > 0.1: score += 1; sigs.append(f"VWAP +{pvwap:.2f}%")
     elif pvwap < -0.1: score -= 1; sigs.append(f"VWAP {pvwap:.2f}%")
 
-    # ── Confirmadores: MACD ──
+    # ── 3. Confirmadores: MACD ──
     if indicators["macd_cross"] == "bullish": score += 2; sigs.append("MACD bull")
     elif indicators["macd_cross"] == "bearish": score -= 2; sigs.append("MACD bear")
     elif indicators["macd_hist"] > 0: score += 1
     elif indicators["macd_hist"] < 0: score -= 1
 
-    # ── RSI — solo extremos (simplificado) ──
+    # ── 4. RSI — Solo extremos o momentum ──
     rsi = indicators.get("rsi", 50)
-    if rsi < 25: score += 2; sigs.append(f"RSI sobrevendido {rsi:.0f}")
-    elif rsi > 75: score -= 2; sigs.append(f"RSI sobrecomprado {rsi:.0f}")
+    if rsi < 30: score += 2; sigs.append(f"RSI Low {rsi:.0f}")
+    elif rsi > 70: score -= 2; sigs.append(f"RSI High {rsi:.0f}")
+    
+    # RSI Momentum: Si está entre 55-65 y subiendo, es momentum fuerte
+    if 55 < rsi < 65: score += 1
+    elif 35 > rsi > 45: score -= 1
 
-    # ── Volumen — aditivo, no multiplicativo (linear scoring) ──
+    # ── 5. Volumen — Explosividad ──
     vol_ratio = indicators.get("vol_ratio", 1)
-    if vol_ratio > 1.8:
+    if vol_ratio > 2.0:
+        score += 2 if score > 0 else -2
+        sigs.append(f"Volume Surge {vol_ratio:.1f}x")
+    elif vol_ratio > 1.5:
         score += 1 if score > 0 else -1
-        sigs.append(f"Vol alto {vol_ratio:.1f}x")
 
-    # ── Funding rate ──
+    # ── 6. Contexto & Balance ──
     funding = indicators.get("funding_rate", 0)
-    if funding > 0.03: score -= 1; sigs.append("Funding alto")
-    elif funding < -0.03: score += 1; sigs.append("Funding neg")
+    if funding > 0.05: score -= 1; sigs.append("High Funding")
+    elif funding < -0.05: score += 1; sigs.append("Neg Funding")
 
-    # ── Sobreextensión 24h ──
     change_24h = market_data.get("change_24h", 0)
-    if change_24h > 12: score -= 2; sigs.append(f"Pump +{change_24h:.1f}%")
-    elif change_24h < -12: score += 2; sigs.append(f"Dump {change_24h:.1f}%")
+    if change_24h > 15: score -= 2; sigs.append("Overextended +15%")
+    elif change_24h < -15: score += 2; sigs.append("Overextended -15%")
 
-    # ── Balance soft penalty ──
-    if open_l > open_s + 1: score -= 1
-    elif open_s > open_l + 1: score += 1
+    # Balance soft penalty
+    if open_l > open_s + 2: score -= 1
+    elif open_s > open_l + 2: score += 1
 
-    # ── Hard block: máximo 7 posiciones por dirección ──
-    if open_l >= 7 and score > 0: return None
-    if open_s >= 7 and score < 0: return None
+    # ── Hard blocks ──
+    if open_l >= 8 and score > 0: return None
+    if open_s >= 8 and score < 0: return None
 
-    # ── Threshold mínimo ──
-    if abs(score) < 2: return None
+    # Threshold mínimo para máxima ganancia (más selectivo)
+    if abs(score) < 4: return None
 
-    # FIX 5: Respetar bias del escenario - no abrir contra tendencia
-    # Para bots multi-asset, simulamos bias bearish como scaler negativo
     direction = "LONG" if score > 0 else "SHORT"
-    conf = "HIGH" if abs(score) >= 4 else "MEDIUM"
+    conf = "HIGH" if abs(score) >= 6 else "MEDIUM"
 
-    # ── Kelly Criterion sizing ──
+    # ── Kelly Criterion con esteroides para Max Profit ──
     trades = (closed_trades or [])[-50:]
     if len(trades) >= 10:
         wins = [t for t in trades if (t.get("pnl") or 0) > 0]
@@ -293,30 +332,32 @@ def analyze_altcoin(indicators, market_data, capital, open_pos, open_l, open_s, 
         avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 1
         avg_loss = abs(sum(t["pnl"] for t in losses) / len(losses)) if losses else 1
         b = avg_win / avg_loss if avg_loss > 0 else 1
-        kelly = max(0.12, min(0.35, win_rate - (1 - win_rate) / b))  # clamped 12%-35%
+        kelly = max(0.15, min(0.40, win_rate - (1 - win_rate) / b)) # 15%-40%
         max_position = capital * kelly
     else:
-        max_position = capital / 5  # fallback $40 en vez de $20
+        max_position = capital / 4 # $50 fallback en $200
 
-    size = round(max_position * (1.0 if conf == "HIGH" else 0.7), 2)
-    size = max(size, round(capital * 0.10, 2))  # mínimo 10% del capital disponible
+    size = round(max_position * (1.1 if conf == "HIGH" else 0.8), 2)
+    size = max(size, round(capital * 0.12, 2))
 
-    strategy = "EMA_CROSS" if indicators["cross_bullish"] or indicators["cross_bearish"] else \
-               "MEAN_REVERSION" if rsi < 30 or rsi > 70 else \
-               "MOMENTUM" if indicators["macd_cross"] in ("bullish","bearish") and vol_ratio > 1.5 else "RANGE"
+    # Identificar estrategia para el log
+    if indicators.get("is_squeeze"): strategy = "SQUEEZE_BREAKOUT"
+    elif adx > 30: strategy = "STRONG_TREND"
+    elif indicators["cross_bullish"] or indicators["cross_bearish"]: strategy = "EMA_CROSS"
+    else: strategy = "MOMENTUM"
 
-    # ── TP/SL dinámicos basados en ATR ──
-    atr_pct = indicators.get("atr_pct", 0) / 100  # viene en %, convertir a decimal
-    if atr_pct > 0.003:  # solo si ATR es razonable (>0.3%)
-        tp_pct = round(min(max(atr_pct * 3.0, 0.02), 0.12), 4)   # 3x ATR, clamp 2%-12%
-        sl_pct = round(min(max(atr_pct * 1.2, 0.005), 0.04), 4)  # 1.2x ATR, clamp 0.5%-4%
-        trail_trigger = round(atr_pct * 0.6, 4)                    # 0.6x ATR
-        tp_callback = round(min(max(atr_pct * 0.4, 0.002), 0.015), 4)  # 0.4x ATR, clamp 0.2%-1.5%
+    # ── TP/SL Agresivo para capturar 'Moonshots' ──
+    atr_pct = indicators.get("atr_pct", 1.0) / 100
+    if adx > 30:
+        # En tendencia fuerte, TP más largo y SL más ajustado (Trailing hará el resto)
+        tp_pct = round(min(max(atr_pct * 5.0, 0.05), 0.20), 4)   # 5x ATR, 5%-20%
+        sl_pct = round(min(max(atr_pct * 1.5, 0.008), 0.03), 4)  # 1.5x ATR, 0.8%-3%
     else:
-        tp_pct = DEFAULT_TP_PCT
-        sl_pct = DEFAULT_SL_PCT
-        trail_trigger = TRAILING_TRIGGER
-        tp_callback = TP_CALLBACK_PCT
+        tp_pct = round(min(max(atr_pct * 3.5, 0.03), 0.12), 4)   # 3.5x ATR, 3%-12%
+        sl_pct = round(min(max(atr_pct * 1.8, 0.01), 0.04), 4)   # 1.8x ATR, 1%-4%
+
+    trail_trigger = round(atr_pct * 0.7, 4)
+    tp_callback = round(min(max(atr_pct * 0.3, 0.002), 0.01), 4)
 
     return {
         "strategy": strategy, "direction": direction, "confidence": conf,
