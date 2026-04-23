@@ -543,21 +543,27 @@ def run_cycle(client, paper):
     # 2. Verificar stops con precio REAL (no con 0)
     paper.check_scalping_stops(price)
     paper.update_breakeven_stop(price)  # MEJORA 1: Breakeven Stop
-    open_trade = paper.get_scalping_position()
-    capital    = paper.state.current_capital + sum(t.size for t in paper.state.open_trades if t.bot == "scalping")
-    current_pos = open_trade.side if open_trade else "FLAT"
+    
+    open_trades = [t for t in paper.state.open_trades if t.bot == "scalping"]
+    capital    = paper.state.current_capital + sum(t.size for t in open_trades)
+    
+    # Mostrar resumen de posiciones abiertas
+    pos_summary = f"{len(open_trades)} pos abiertas"
+    if open_trades:
+        dirs = [t.side for t in open_trades]
+        pos_summary += f" ({'/'.join(dirs)})"
+    
+    log.info(f"  BTC ${price:,.2f} | Regime:{detect_regime(ind)} ADX:{ind['adx']:.0f} | EMA:{ind['ema_trend']} RSI:{ind['rsi']} CVD:{'↑' if ind['cvd_bullish'] else '↓'} Vol:{ind['vol_ratio']:.1f}x | {pos_summary}")
 
-    log.info(f"  BTC ${price:,.2f} | Regime:{detect_regime(ind)} ADX:{ind['adx']:.0f} | EMA:{ind['ema_trend']} RSI:{ind['rsi']} CVD:{'↑' if ind['cvd_bullish'] else '↓'} Vol:{ind['vol_ratio']:.1f}x | Pos:{current_pos}")
-
-    # 3. Trailing stop dinámico (ATR-based)
-    new_sl = update_trailing_stop(open_trade, price, atr=ind["atr"])
-    if new_sl:
-        move_pct = abs(price - open_trade.entry_price) / open_trade.entry_price * 100
-        best = open_trade.best_price or price
-        dist_pct = abs(best - new_sl) / best * 100
-        log.info(f"  📈 Trailing → SL ${new_sl:,.2f} (profit +{move_pct:.2f}%, best ${best:,.2f}, dist {dist_pct:.3f}%)")
-        open_trade.stop_loss = new_sl
-        paper.save()
+    # 3. Trailing stop dinámico para todas las posiciones
+    for trade in open_trades:
+        new_sl = update_trailing_stop(trade, price, atr=ind["atr"])
+        if new_sl:
+            move_pct = abs(price - trade.entry_price) / trade.entry_price * 100
+            best = trade.best_price or price
+            log.info(f"  📈 Trailing {trade.id} → SL ${new_sl:,.2f} (profit +{move_pct:.2f}%)")
+            trade.stop_loss = new_sl
+    paper.save()
 
     # 4. Actualizar datos en state para el dashboard
     paper.update_market_data(
@@ -583,7 +589,7 @@ def run_cycle(client, paper):
     scenario = detect_scenario(client)
     log.info(f"  Escenario: {scenario['name']} | bias={scenario['direction']} | regimes={scenario.get('sc_regimes', [])}")
 
-    decision = analyze(ind, current_pos, scenario=scenario)
+    decision = analyze(ind, "FLAT", scenario=scenario) # Forzamos FLAT para obtener señales siempre
     action   = decision["decision"]
     conf     = decision["confidence"]
     log.info(f"  → {action} [{conf}] | {decision['reasoning']}")
@@ -593,18 +599,19 @@ def run_cycle(client, paper):
         paper.add_log(f"HOLD — {decision['reasoning'][:60]}")
 
     elif action == "FLAT":
-        if open_trade:
-            # No cerrar por señal — dejar que trailing stop y SL manejen la salida.
-            # El signal exit tenía WR 3% (129 trades en pérdida): más daño que beneficio.
-            paper.add_log(f"HOLD — salida por trailing/SL | {decision['reasoning'][:50]}")
-        else:
             paper.add_log(f"FLAT — {decision['reasoning'][:60]}")
 
     elif action in ("LONG", "SHORT"):
         if conf == "LOW":
             paper.add_log("LOW confidence — esperando")
         else:
-            # Circuit breaker por dirección: SLs del mismo lado en últimas 2h
+            # FIX: Verificar si ya tenemos una posición idéntica (misma dirección)
+            duplicate = any(t.side == action for t in open_trades)
+            if duplicate:
+                log.info(f"  🚫 {action} ignorado — ya existe posición abierta en esta dirección")
+                return
+
+            # Circuit breaker por dirección... (mismo código)
             try:
                 raw2 = _json.loads(SCALPING_STATE.read_text()) if SCALPING_STATE.exists() else {}
                 cutoff = (datetime.now() - timedelta(hours=2)).isoformat()
@@ -666,12 +673,9 @@ def run_cycle(client, paper):
                 except Exception:
                     pass
 
-            if open_trade and open_trade.side != action:
-                paper.close_scalping_position(price, "SIGNAL")
-                paper.state.last_signal_exit = datetime.now().isoformat()
-            if not paper.get_scalping_position():
-                decision["entry_adx"] = ind["adx"]
-                paper.open_scalping_trade(decision, price, capital, LEVERAGE)
+            # Abrir nueva posición
+            decision["entry_adx"] = ind["adx"]
+            paper.open_scalping_trade(decision, price, capital, LEVERAGE)
 
     paper.save()
     pos_value = sum(t.size for t in paper.state.open_trades)
