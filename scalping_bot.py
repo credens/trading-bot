@@ -189,6 +189,11 @@ def calc_indicators(df: pd.DataFrame) -> dict:
     bb_lower = sma20 - 2 * std20
     bb_pct   = float(((close - bb_lower) / (bb_upper - bb_lower).replace(0, np.nan)).iloc[-1])
     bb_mid   = float(sma20.iloc[-1])
+    
+    # Squeeze Detection para BTC
+    bb_width = float((4 * std20.iloc[-1]) / bb_mid) if bb_mid > 0 else 0
+    bb_width_avg = (4 * std20 / sma20).rolling(20).mean().iloc[-1]
+    is_squeeze = bb_width < bb_width_avg * 0.85
 
     # ── Contexto EMA50 ────────────────────────────────────────
     ema50 = close.ewm(span=50, adjust=False).mean()
@@ -222,6 +227,7 @@ def calc_indicators(df: pd.DataFrame) -> dict:
         "bb_mid":         round(bb_mid, 2),
         "bb_upper":       round(float(bb_upper.iloc[-1]), 2),
         "bb_lower":       round(float(bb_lower.iloc[-1]), 2),
+        "is_squeeze":     is_squeeze,
         "adx_prev":       round(adx, 1),  # MEJORA 4: Track ADX anterior para detectar aceleración
     }
 
@@ -303,19 +309,22 @@ def analyze(ind: dict, current_position: str, scenario=None) -> dict:
             return make("FLAT", "MEDIUM", f"Régimen {regime} desactivado en {scenario['name']}", [f"Permitidos: {','.join(allowed)}"])
 
     # ══════════════════════════════════════════════════════════
-    # MODO BREAKOUT — volumen explosivo (>2.5x)
+    # MODO BREAKOUT — volumen explosivo (>2.5x) o Squeeze Breakout
     # ══════════════════════════════════════════════════════════
-    if regime == "BREAKOUT":
-        candle_body = price - ind.get("open", price)  # no lo tenemos fácil, usar MACD
-        if macd_h > 0 and rsi < 75:  # CVD relaxed for breakout
+    if regime == "BREAKOUT" or ind.get("is_squeeze"):
+        # Si hay squeeze, somos más sensibles a la dirección
+        threshold_bb_upper = 0.8 if ind.get("is_squeeze") else 0.9
+        threshold_bb_lower = 0.2 if ind.get("is_squeeze") else 0.1
+
+        if (macd_h > 0 or ind["bb_pct"] > threshold_bb_upper) and rsi < 80:
             return make("LONG", "HIGH",
-                        f"Breakout LONG | Vol:{vol:.1f}x | CVD↑ | MACD:{macd_h:+.1f}",
-                        [f"Vol {vol:.1f}x ✓", "CVD alcista ✓", f"MACD {macd_h:+.1f}"])
-        if macd_h < 0 and rsi > 25:  # CVD relaxed for breakout
+                        f"Breakout LONG | Vol:{vol:.1f}x | Squeeze:{ind.get('is_squeeze')} | BB:{ind['bb_pct']:.2f}",
+                        [f"Vol {vol:.1f}x ✓", "Momentum UP ✓"])
+        
+        if (macd_h < 0 or ind["bb_pct"] < threshold_bb_lower) and rsi > 20:
             return make("SHORT", "HIGH",
-                        f"Breakout SHORT | Vol:{vol:.1f}x | CVD↓ | MACD:{macd_h:+.1f}",
-                        [f"Vol {vol:.1f}x ✓", "CVD bajista ✓", f"MACD {macd_h:+.1f}"])
-        return make("FLAT", "MEDIUM", f"Breakout sin dirección clara (CVD{'↑' if ind['cvd_bullish'] else '↓'} MACD:{macd_h:+.1f})", ["Sin confluencia"])
+                        f"Breakout SHORT | Vol:{vol:.1f}x | Squeeze:{ind.get('is_squeeze')} | BB:{ind['bb_pct']:.2f}",
+                        [f"Vol {vol:.1f}x ✓", "Momentum DOWN ✓"])
 
     # ══════════════════════════════════════════════════════════
     # MODO TREND — ADX > 25, seguir momentum
