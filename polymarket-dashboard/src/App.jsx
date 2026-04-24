@@ -387,7 +387,7 @@ function AltcoinPanel({ data, liveprices, onClose }) {
         </div>
       </div>
 
-      <div style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
+      <div className="stat-row" style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
         <Stat label="Capital" value={`$${(data.current_capital||0).toFixed(2)}`} />
         <PnlDisplay pnl={data.total_pnl||0} pct={data.total_pnl_pct||0} />
         <Stat label="Win Rate" value={`${(data.win_rate||0).toFixed(0)}%`} color="#ffcc00" />
@@ -660,7 +660,7 @@ function AltScalpPanel({ data, liveprices, onClose }) {
         const posValue = positions.reduce((s,p)=>s+(p.size_usdt||p.size||0),0);
         const effectiveCap = (data.current_capital||0) + posValue;
         return (
-          <div style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
+          <div className="stat-row" style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
             <Stat label="Capital"   value={`$${effectiveCap.toFixed(2)}`} />
             <PnlDisplay pnl={data.total_pnl||0} pct={data.total_pnl_pct||0} />
             <Stat label="Win Rate"  value={`${(data.win_rate||0).toFixed(0)}%`} color="#ffcc00" />
@@ -941,7 +941,7 @@ function ScalpingPanel({ data, liveprices, onClose }) {
         const posValue = (data.open_trades||[]).reduce((s,t)=>s+(t.size||0),0);
         const effectiveCap = (data.current_capital||0) + posValue;
         return (
-          <div style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
+          <div className="stat-row" style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
             <Stat label="Capital"  value={`$${effectiveCap.toFixed(2)}`} />
             <PnlDisplay pnl={data.total_pnl||0} pct={data.total_pnl_pct||0} />
             <Stat label="RSI 1m"   value={data.rsi?.toFixed(1)||"--"} color={data.rsi<30?"#00ff88":data.rsi>70?"#ff4444":"#ccc"} />
@@ -1129,7 +1129,7 @@ function CodeEditor({ files }) {
   const [content, setContent] = useState("");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
-  const LOCAL_API = "http://localhost:8082";
+  const LOCAL_API = "/api";
 
   const loadFile = async (name) => {
     if (!name) return;
@@ -1178,7 +1178,7 @@ export default function Dashboard() {
   const [time, setTime] = useState(new Date());
   const [lastFetch, setLastFetch] = useState("--");
 
-  const LOCAL_API = "http://localhost:8082";
+  const LOCAL_API = "/api";
 
   const fetchStates = useCallback(async () => {
     const recentManualClose = Date.now() - lastManualClose.current < 60000;
