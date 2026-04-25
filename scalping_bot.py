@@ -17,7 +17,8 @@ SEÑALES NUEVAS:
   · Trailing stop — mueve SL a breakeven cuando el trade llega a 50% del TP
 
 FILTROS:
-  · Horario: no operar 00:00–06:00 UTC (baja liquidez)
+
+  · Horario: 24/7 (eliminada restricción 00:00–06:00 UTC)
   · ATR máx: 0.5% en 1m (demasiada volatilidad para scalp)
   · CVD divergence blocker: no entrar si precio y CVD van en direcciones opuestas
 
