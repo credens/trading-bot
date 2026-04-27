@@ -864,20 +864,12 @@ function ScalpingPanel({ data, liveprices, onClose }) {
     <button onClick={()=>setTab(id)} style={{ background:tab===id?`rgba(255,153,51,0.1)`:"transparent", border:`1px solid ${tab===id?"#ff993355":"transparent"}`, color:tab===id?ACC:"#bbb", borderRadius:7, padding:"5px 14px", fontSize:11, cursor:"pointer", fontFamily:"monospace" }}>{label}</button>
   );
 
-  const openTradeFromPositions = data.positions ? Object.values(data.positions)[0] : null;
-  const openTrade = openTradeFromPositions || (data.open_trades||[]).find(t => t.bot==="scalping" || (t.id||"").startsWith("SC-")) || null;
+  const openTrades = [
+    ...Object.values(data.positions || {}),
+    ...(data.open_trades || []).filter(t => t.bot === "scalping" || (t.id||"").startsWith("SC-"))
+  ].filter((t, i, arr) => arr.findIndex(x => (x.id && x.id === t.id) || (x.symbol && x.symbol === t.symbol)) === i);
   const closed    = data.all_closed_trades || (data.closed_trades||[]).filter(t => t.bot==="scalping" || (t.id||"").startsWith("SC-") || !t.bot);
-  const posColor  = openTrade?.side==="LONG" ? "#00ff88" : openTrade?.side==="SHORT" ? "#ff4444" : "#bbb";
   const btcLive   = liveprices?.["BTCUSDT"] || data.btc_price || 0;
-
-  const unrealizedRaw = openTrade && btcLive
-    ? (openTrade.side==="LONG"
-        ? (btcLive - openTrade.entry_price) / openTrade.entry_price
-        : (openTrade.entry_price - btcLive) / openTrade.entry_price
-      ) * (openTrade.leverage || 10)
-    : null;
-  const unrealizedPct = unrealizedRaw !== null ? (unrealizedRaw * 100).toFixed(2) : null;
-  const unrealizedUsd = unrealizedRaw !== null ? (unrealizedRaw * (openTrade.size || 0)) : null;
 
   // Análisis técnico en vivo (1m)
   useEffect(() => {
@@ -950,40 +942,51 @@ function ScalpingPanel({ data, liveprices, onClose }) {
         );
       })()}
 
-      {openTrade && (
-        <div style={{ background:`${posColor}11`, border:`1px solid ${posColor}33`, borderRadius:10, padding:"12px 16px", marginBottom:14 }}>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-            <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-              <Badge text={openTrade.side} color={posColor} />
-              <span style={{ color:"#bbb", fontSize:12 }}>entrada ${openTrade.entry_price?.toLocaleString()}</span>
-              <Badge text={openTrade.confidence||"--"} color={openTrade.confidence==="HIGH"?"#00ff88":"#ffcc00"} />
+      {openTrades.map((openTrade, idx) => {
+        const posColor = openTrade.side==="LONG" ? "#00ff88" : openTrade.side==="SHORT" ? "#ff4444" : "#bbb";
+        const unrealizedRaw = btcLive
+          ? (openTrade.side==="LONG"
+              ? (btcLive - openTrade.entry_price) / openTrade.entry_price
+              : (openTrade.entry_price - btcLive) / openTrade.entry_price
+            ) * (openTrade.leverage || 5)
+          : null;
+        const unrealizedPct = unrealizedRaw !== null ? (unrealizedRaw * 100).toFixed(2) : null;
+        const unrealizedUsd = unrealizedRaw !== null ? (unrealizedRaw * (openTrade.size || 0)) : null;
+        return (
+          <div key={openTrade.id || openTrade.symbol || idx} style={{ background:`${posColor}11`, border:`1px solid ${posColor}33`, borderRadius:10, padding:"12px 16px", marginBottom:8 }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
+              <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <Badge text={openTrade.side} color={posColor} />
+                <span style={{ color:"#bbb", fontSize:12 }}>entrada ${openTrade.entry_price?.toLocaleString()}</span>
+                <Badge text={openTrade.confidence||"--"} color={openTrade.confidence==="HIGH"?"#00ff88":"#ffcc00"} />
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
+                {onClose && (
+                  <button onClick={()=>onClose(openTrade)} style={{ background:"rgba(255,68,68,0.15)", border:"1px solid #ff444455", color:"#ff6666", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer", fontFamily:"monospace" }}>
+                    CERRAR
+                  </button>
+                )}
+                {unrealizedPct && (() => {
+                  const col = parseFloat(unrealizedPct) >= 0 ? "#00ff88" : "#ff4444";
+                  const sign = parseFloat(unrealizedPct) >= 0 ? "+" : "";
+                  return (
+                    <div style={{ textAlign:"right" }}>
+                      <div style={{ color:col, fontWeight:700, fontSize:16, fontFamily:"monospace" }}>{sign}{unrealizedUsd.toFixed(2)}$</div>
+                      <div style={{ color:col+"aa", fontWeight:700, fontSize:12, fontFamily:"monospace" }}>{sign}{unrealizedPct}%</div>
+                    </div>
+                  );
+                })()}
+              </div>
             </div>
-            <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:4 }}>
-              {onClose && (
-                <button onClick={()=>onClose(openTrade)} style={{ background:"rgba(255,68,68,0.15)", border:"1px solid #ff444455", color:"#ff6666", borderRadius:6, padding:"4px 10px", fontSize:11, cursor:"pointer", fontFamily:"monospace" }}>
-                  CERRAR
-                </button>
-              )}
-              {unrealizedPct && (() => {
-                const col = parseFloat(unrealizedPct) >= 0 ? "#00ff88" : "#ff4444";
-                const sign = parseFloat(unrealizedPct) >= 0 ? "+" : "";
-                return (
-                  <div style={{ textAlign:"right" }}>
-                    <div style={{ color:col, fontWeight:700, fontSize:16, fontFamily:"monospace" }}>{sign}{unrealizedUsd.toFixed(2)}$</div>
-                    <div style={{ color:col+"aa", fontWeight:700, fontSize:12, fontFamily:"monospace" }}>{sign}{unrealizedPct}%</div>
-                  </div>
-                );
-              })()}
+            <div style={{ display:"flex", gap:14, fontFamily:"monospace", fontSize:11 }}>
+              <span style={{ color:"#bbb" }}>size <span style={{ color:ACC }}>${openTrade.size?.toFixed(2)}</span></span>
+              <span style={{ color:"#bbb" }}>SL <span style={{ color:"#ff4444" }}>${openTrade.stop_loss?.toLocaleString()}</span></span>
+              <span style={{ color:"#bbb" }}>TP <span style={{ color:"#00ff88" }}>${openTrade.take_profit?.toLocaleString()}</span></span>
             </div>
+            {openTrade.reasoning && <div style={{ color:"#bbb", fontSize:11, marginTop:6 }}>{openTrade.reasoning?.slice(0,80)}...</div>}
           </div>
-          <div style={{ display:"flex", gap:14, fontFamily:"monospace", fontSize:11 }}>
-            <span style={{ color:"#bbb" }}>size <span style={{ color:ACC }}>${openTrade.size?.toFixed(2)}</span></span>
-            <span style={{ color:"#bbb" }}>SL <span style={{ color:"#ff4444" }}>${openTrade.stop_loss?.toLocaleString()}</span></span>
-            <span style={{ color:"#bbb" }}>TP <span style={{ color:"#00ff88" }}>${openTrade.take_profit?.toLocaleString()}</span></span>
-          </div>
-          {openTrade.reasoning && <div style={{ color:"#bbb", fontSize:11, marginTop:6 }}>{openTrade.reasoning?.slice(0,80)}...</div>}
-        </div>
-      )}
+        );
+      })}
 
       <div style={{ display:"flex", gap:6, marginBottom:14, flexWrap:"wrap" }}>
         <Badge text={`Trend: ${data.trend||"--"}`} color={data.trend==="bullish"?"#00ff88":data.trend==="bearish"?"#ff4444":"#bbb"} />
@@ -1011,13 +1014,16 @@ function ScalpingPanel({ data, liveprices, onClose }) {
 
       {tab==="position" && (
         <div>
-          <BTCChart entryPrice={openTrade?.entry_price} side={openTrade?.side} stopLoss={openTrade?.stop_loss} takeProfit={openTrade?.take_profit} defaultInterval="1m" />
-          {!openTrade && (
+          <BTCChart entryPrice={openTrades[0]?.entry_price} side={openTrades[0]?.side} stopLoss={openTrades[0]?.stop_loss} takeProfit={openTrades[0]?.take_profit} defaultInterval="1m" />
+          {openTrades.length === 0 && (
             <div style={{ color:"#ccc", textAlign:"center", padding:12, fontSize:12 }}>Sin posición — esperando señal scalping</div>
           )}
-          {openTrade && (
+          {openTrades.length > 0 && (
             <div style={{ color:"#bbb", fontSize:12, textAlign:"center" }}>
-              Trade activo desde {openTrade.entry_time?.slice(0,16)?.replace("T"," ")}
+              {openTrades.length === 1
+                ? `Trade activo desde ${openTrades[0].entry_time?.slice(0,16)?.replace("T"," ")}`
+                : `${openTrades.length} trades activos`
+              }
             </div>
           )}
         </div>

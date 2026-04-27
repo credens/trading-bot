@@ -46,13 +46,13 @@ log = logging.getLogger(__name__)
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 SYMBOL         = "BTCUSDT"
-LEVERAGE       = int(os.getenv("LEVERAGE", "3"))
+LEVERAGE       = int(os.getenv("LEVERAGE", "5"))
 DRY_RUN        = os.getenv("DRY_RUN", "true").lower() == "true"
 SCALP_CAPITAL  = float(os.getenv("SCALP_CAPITAL", "500"))
 CYCLE_SECONDS  = int(os.getenv("SCALP_CYCLE_SECONDS", "30"))
 SL_PCT         = 0.008   # 0.8% mínimo
 TP_PCT         = 0.018   # 1.8% mínimo
-POS_PCT        = 0.15    # 15% del capital por trade
+POS_PCT        = 0.25    # 25% del capital por trade
 MIN_HOLD_SECS  = 120     # 2 min mínimo antes de cerrar por SIGNAL (era 5 min)
 SIGNAL_COOLDOWN_SECS = 60   # 1 min cooldown después de cerrar por SIGNAL (era 3 min)
 
@@ -524,15 +524,21 @@ def run_cycle(client, paper):
 
     # 0. Cierre manual desde dashboard
     try:
-        raw = _json.loads(SCALPING_STATE.read_text()) if SCALPING_STATE.exists() else {}
-        if raw.get("manual_close"):
-            log.info("🛑 Cierre manual solicitado")
-            if paper.get_scalping_position():
-                df_tmp = fetch_1m(client, limit=5)
-                paper.close_scalping_position(float(df_tmp["close"].iloc[-1]), "MANUAL")
-            raw["manual_close"] = False
-            raw["cooldown_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
-            SCALPING_STATE.write_text(_json.dumps(raw, indent=2))
+        if SCALPING_STATE.exists():
+            raw = _json.loads(SCALPING_STATE.read_text())
+            if raw.get("manual_close"):
+                log.info("🛑 Cierre manual solicitado")
+                pos = paper.get_scalping_position()
+                if pos:
+                    df_tmp = fetch_1m(client, limit=5)
+                    paper.close_scalping_position(float(df_tmp["close"].iloc[-1]), "MANUAL")
+                
+                # IMPORTANTE: Después de cerrar, limpiar el flag en el archivo
+                raw["manual_close"] = False
+                raw["cooldown_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
+                SCALPING_STATE.write_text(_json.dumps(raw, indent=2))
+                # Recargar estado en memoria para que el bot sepa que está FLAT
+                paper.state = paper._load_or_create(SCALP_CAPITAL)
     except Exception as e:
         log.warning(f"Error en cierre manual: {e}")
 

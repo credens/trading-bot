@@ -6,7 +6,7 @@ Señales: volume burst + momentum + BB en altcoins top
 TP: 0.2-0.4% | SL: 0.15-0.3% | Time limit: 90s
 """
 
-import os, json, time, logging
+import os, json, time, logging, fcntl
 import numpy as np
 import pandas as pd
 from datetime import datetime, timezone, timedelta
@@ -62,32 +62,59 @@ STATE_DIR  = Path("./paper_trading")
 STATE_DIR.mkdir(exist_ok=True)
 STATE_FILE = STATE_DIR / "altscalp_state.json"
 
-def load_state():
-    if STATE_FILE.exists():
-        try:
-            return json.loads(STATE_FILE.read_text())
-        except Exception:
-            pass
+def _fresh_state():
     return {
-        "bot": "altscalp",
-        "initial_capital": CAPITAL,
-        "current_capital": CAPITAL,
-        "peak_capital": CAPITAL,
-        "positions": {},
-        "closed_trades": [],
-        "total_pnl": 0.0,
-        "total_pnl_pct": 0.0,
-        "win_rate": 0.0,
-        "max_drawdown": 0.0,
-        "trades_today": 0,
-        "cycle_log": [],
-        "last_updated": "",
-        "scanner_coins": [],
+        "bot": "altscalp", "initial_capital": CAPITAL, "current_capital": CAPITAL,
+        "peak_capital": CAPITAL, "positions": {}, "closed_trades": [],
+        "total_pnl": 0.0, "total_pnl_pct": 0.0, "win_rate": 0.0,
+        "max_drawdown": 0.0, "trades_today": 0, "cycle_log": [],
+        "last_updated": "", "scanner_coins": [], "cooldowns": {}, "manual_close": []
     }
 
+def load_state():
+    if not STATE_FILE.exists():
+        return _fresh_state()
+    try:
+        with open(STATE_FILE, "r") as f:
+            fcntl.flock(f, fcntl.LOCK_SH)
+            data = json.load(f)
+        # Validar que es un estado real, no una respuesta de error del servidor
+        if not data.get("bot") or "error" in data:
+            log.warning("Estado inválido detectado — reiniciando estado altscalp")
+            return _fresh_state()
+        data.setdefault("positions", {})
+        data.setdefault("cooldowns", {})
+        data.setdefault("manual_close", [])
+        if data.get("initial_capital", 0) == 0:
+            data["initial_capital"] = CAPITAL
+        return data
+    except Exception as e:
+        log.warning(f"Error cargando estado altscalp: {e} — reiniciando")
+        return _fresh_state()
+
 def save_state(state):
-    state["last_updated"] = datetime.now().isoformat()
-    STATE_FILE.write_text(json.dumps(state, indent=2, default=str))
+    """Guarda el estado usando truncate para no romper el descriptor de archivo."""
+    try:
+        state["last_updated"] = datetime.now().isoformat()
+        with open(STATE_FILE, "a+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            f.seek(0)
+            try:
+                disk_data = json.load(f)
+                # Sincronizar cierres manuales del dashboard
+                for sym in disk_data.get("manual_close", []):
+                    if sym not in state["manual_close"]:
+                        state["manual_close"].append(sym)
+            except: pass
+            
+            f.seek(0)
+            f.truncate()
+            json.dump(state, f, indent=2, default=str)
+            f.flush()
+            import os
+            os.fsync(f.fileno())
+    except Exception as e:
+        log.error(f"Error guardando estado AltScalp: {e}")
 
 def add_log(state, msg):
     entry = {"time": datetime.now().strftime("%H:%M:%S"), "msg": msg}
@@ -271,6 +298,9 @@ def close_position(state, symbol, price, reason):
     if not pos:
         return
 
+    # AÑADIR COOLDOWN: 10 min para no re-abrir inmediatamente
+    state.setdefault("cooldowns", {})[symbol] = (datetime.now() + timedelta(minutes=10)).isoformat()
+
     entry     = pos["entry_price"]
     size      = pos["size_usdt"]
     lev       = pos["leverage"]
@@ -316,23 +346,24 @@ def monitor_positions(client, state):
     now = datetime.now()
 
     for symbol, pos in list(state["positions"].items()):
-        # Obtener precio actual — 3 intentos, luego fallback a best_price
-        price = None
-        for attempt in range(3):
-            try:
-                ticker = client.futures_symbol_ticker(symbol=symbol)
-                price  = float(ticker["price"])
-                break
-            except Exception as e:
-                if attempt == 2:
-                    log.warning(f"  ⚠ {symbol} ticker falló 3 veces: {e}")
-        if price is None:
-            # Sin precio live: usar best_price y forzar chequeo de SL/emergency igual
-            price = pos.get("best_price") or pos["entry_price"]
+        try:
+            ticker = client.futures_symbol_ticker(symbol=symbol)
+            price  = float(ticker["price"])
+        except Exception as e:
+            log.warning(f"  ⚠ {symbol} ticker error: {e}")
+            continue
 
         direction = pos["direction"]
         entry     = pos["entry_price"]
         lev       = pos["leverage"]
+        size      = pos["size_usdt"]
+        
+        # Calcular P&L flotante para el dashboard
+        raw = (price - entry) / entry if direction == "LONG" else (entry - price) / entry
+        pos["pnl_pct"] = round(raw * lev * 100, 2)
+        pos["pnl"] = round(raw * lev * size, 2)
+        pos["current_price"] = price
+
         tp        = pos["take_profit"]
         sl        = pos["stop_loss"]
 
@@ -417,6 +448,12 @@ def run_cycle(client):
 
     # 3. Entradas si hay slots
     slots = MAX_POSITIONS - len(state["positions"])
+    
+    # Limpiar cooldowns viejos
+    now = datetime.now()
+    state["cooldowns"] = {s: t for s, t in state.get("cooldowns", {}).items() 
+                          if datetime.fromisoformat(t) > now}
+
     if slots > 0 and _coin_cache["coins"]:
         analyzed = 0
         entries  = []
@@ -424,7 +461,9 @@ def run_cycle(client):
             if analyzed >= slots * 5:
                 break
             sym = coin["symbol"]
-            if sym in state["positions"] or coin["change_pct"] < 0.5:
+            
+            # FILTRO: No estar en posición NI en cooldown
+            if sym in state["positions"] or sym in state["cooldowns"] or coin["change_pct"] < 0.5:
                 continue
             ind = get_indicators(client, sym)
             if not ind or ind["vol_ratio"] < 1.5:  # era 1.3 — señales más limpias
