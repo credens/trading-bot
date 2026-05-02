@@ -413,6 +413,11 @@ def monitor_positions(client, state):
 
 # ── Ciclo Principal ────────────────────────────────────────────────────────────
 def run_cycle(client):
+    # Bloqueo nocturno: solo operar 09:00-15:00 Argentina (12:00-18:00 UTC)
+    _arg_hour = (datetime.now(timezone.utc) + timedelta(hours=-3)).hour
+    if not (9 <= _arg_hour < 15):
+        return
+
     state = load_state()
 
     now_local = datetime.now()

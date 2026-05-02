@@ -52,7 +52,7 @@ SCALP_CAPITAL  = float(os.getenv("SCALP_CAPITAL", "500"))
 CYCLE_SECONDS  = int(os.getenv("SCALP_CYCLE_SECONDS", "30"))
 SL_PCT         = 0.008   # 0.8% mínimo
 TP_PCT         = 0.018   # 1.8% mínimo
-POS_PCT        = 0.25    # 25% del capital por trade
+POS_PCT        = 0.50    # 50% del capital por trade
 MIN_HOLD_SECS  = 120     # 2 min mínimo antes de cerrar por SIGNAL (era 5 min)
 SIGNAL_COOLDOWN_SECS = 60   # 1 min cooldown después de cerrar por SIGNAL (era 3 min)
 
@@ -495,6 +495,13 @@ def update_trailing_stop(open_trade, price: float, atr: float = 0) -> Optional[f
 # ─── Ciclo Principal ──────────────────────────────────────────────────────────
 def run_cycle(client, paper):
     log.info(f"── CICLO {datetime.now().strftime('%H:%M:%S')} ──────────────────────────")
+
+    # Bloqueo nocturno: Argentina 15:00-09:00 (UTC 18:00-12:00) son horas de pérdida
+    _arg_hour = (datetime.now(timezone.utc) + timedelta(hours=-3)).hour
+    if not (9 <= _arg_hour < 15):
+        log.info(f"  ⏸ Horario nocturno ({_arg_hour}:xx ARG) — sin operaciones 15:00-09:00 ARG")
+        paper.save()
+        return
 
     now = datetime.now(timezone.utc)
 

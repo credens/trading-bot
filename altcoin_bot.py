@@ -95,21 +95,21 @@ def get_dynamic_leverage(scenario: dict, atr_pct: float, confidence: str) -> int
         "CRASH":           3,
     }.get(scenario_name, 10)
 
-    # Reducir por alta volatilidad del coin (ATR)
+    # Reducir por alta volatilidad del coin (ATR) — menos penalización para más ganancias
     if atr_pct > 3.0:
-        base = max(3, int(base * 0.40))   # muy volátil → mínimo leverage
+        base = max(5, int(base * 0.65))   # muy volátil — reducción moderada
     elif atr_pct > 2.0:
-        base = max(5, int(base * 0.55))
+        base = max(8, int(base * 0.80))
     elif atr_pct > 1.0:
-        base = max(8, int(base * 0.75))
+        base = max(10, int(base * 0.90))
 
     # Ajuste por confianza de señal
     if confidence == "HIGH":
         base = int(base * 1.25)
     elif confidence == "MEDIUM":
-        base = int(base * 0.85)
+        base = int(base * 0.90)
 
-    return min(20, max(3, base))  # límite: 3x–20x
+    return min(20, max(5, base))  # límite: 5x–20x
 
 
 # ─── PID Lock ────────────────────────────────────────────────────────────────
@@ -317,8 +317,8 @@ def analyze_altcoin(indicators, market_data, capital, open_pos, open_l, open_s, 
     if open_l >= 8 and score > 0: return None
     if open_s >= 8 and score < 0: return None
 
-    # Threshold mínimo para máxima ganancia (más selectivo)
-    if abs(score) < 4: return None
+    # Threshold mínimo — 3 puntos es suficiente para señal válida
+    if abs(score) < 3: return None
 
     direction = "LONG" if score > 0 else "SHORT"
     conf = "HIGH" if abs(score) >= 6 else "MEDIUM"
@@ -332,13 +332,13 @@ def analyze_altcoin(indicators, market_data, capital, open_pos, open_l, open_s, 
         avg_win = sum(t["pnl"] for t in wins) / len(wins) if wins else 1
         avg_loss = abs(sum(t["pnl"] for t in losses) / len(losses)) if losses else 1
         b = avg_win / avg_loss if avg_loss > 0 else 1
-        kelly = max(0.15, min(0.40, win_rate - (1 - win_rate) / b)) # 15%-40%
+        kelly = max(0.20, min(0.55, win_rate - (1 - win_rate) / b)) # 20%-55%
         max_position = capital * kelly
     else:
-        max_position = capital / 4 # $50 fallback en $200
+        max_position = capital * 0.30  # 30% fallback (era capital/4 = 25%)
 
-    size = round(max_position * (1.1 if conf == "HIGH" else 0.8), 2)
-    size = max(size, round(capital * 0.12, 2))
+    size = round(max_position * (1.15 if conf == "HIGH" else 0.90), 2)
+    size = max(size, round(capital * 0.20, 2))  # mínimo 20% del capital
 
     # Identificar estrategia para el log
     if indicators.get("is_squeeze"): strategy = "SQUEEZE_BREAKOUT"
@@ -415,7 +415,8 @@ def save_state(state: dict):
         "open_positions": list(state["positions"].values()),
         "all_closed_trades": closed,
         "closed_trades": closed[-30:],
-        "last_updated": datetime.now().isoformat()
+        "last_updated": datetime.now().isoformat(),
+        "btc_price": state.get("btc_price", 0)  # Asegurar btc_price para el dashboard
     }
 
     try:
@@ -512,6 +513,13 @@ def _close_position(state, symbol, pos, exit_price, exit_reason, note=""):
 def check_positions(client, state, scenario=None):
     now = datetime.now()
     to_close = []
+    
+    # Obtener precio de BTC para el dashboard
+    try:
+        btc_ticker = client.futures_symbol_ticker(symbol="BTCUSDT")
+        state["btc_price"] = float(btc_ticker["price"])
+    except Exception:
+        pass
 
     for symbol, pos in list(state["positions"].items()):
         try:
@@ -522,6 +530,13 @@ def check_positions(client, state, scenario=None):
             sl = pos["stop_loss"]
             tp_act = pos["take_profit"]
             lev = pos.get("leverage", LEVERAGE)
+            size = pos["size_usdt"]
+
+            # Actualizar datos de mercado actuales para el dashboard
+            pos["current_price"] = curr
+            raw_pnl = (curr - entry_price) / entry_price if direction == "LONG" else (entry_price - curr) / entry_price
+            pos["pnl_pct"] = round(raw_pnl * lev * 100, 2)
+            pos["pnl"] = round(raw_pnl * lev * size, 2)
 
             # ── 1. TRAILING STOP LOSS ──
             if direction == "LONG":
@@ -614,7 +629,13 @@ def check_positions(client, state, scenario=None):
 
 def run_cycle(client):
     log.info(f"\n{'='*40}\nALTCOIN CYCLE - {datetime.now().strftime('%H:%M:%S')}\n{'='*40}")
-    
+
+    # Bloqueo nocturno: solo operar 09:00-15:00 Argentina (12:00-18:00 UTC)
+    _arg_hour = (datetime.now(timezone.utc) + timedelta(hours=-3)).hour
+    if not (9 <= _arg_hour < 15):
+        log.info(f"  ⏸ Horario nocturno ({_arg_hour}:xx ARG) — sin operaciones 15:00-09:00 ARG")
+        return
+
     state = load_state()
     now_utc = datetime.now(timezone.utc)
 

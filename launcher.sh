@@ -64,12 +64,12 @@ ALT_PID=$!
 echo $ALT_PID > "$SCRIPT_DIR/.altcoin.pid"
 echo "✓ Altcoin bot iniciado (PID: $ALT_PID)"
 
-# ─── Lanzar AltScalp HFT Bot ─────────────────────────────────────────────────
+# ─── Lanzar AltScalp HFT Bot (con auto-restart) ──────────────────────────────
 echo "Iniciando AltScalp HFT bot..."
-nohup $PYTHON altscalp_bot.py >> "$LOG_FILE" 2>&1 &
+nohup bash -c "cd \"$BOT_DIR\"; while true; do $PYTHON altscalp_bot.py; echo '[altscalp] reiniciando en 5s...'; sleep 5; done" >> "$LOG_FILE" 2>&1 &
 AS_PID=$!
 echo $AS_PID > "$SCRIPT_DIR/.altscalp.pid"
-echo "✓ AltScalp bot iniciado (PID: $AS_PID)"
+echo "✓ AltScalp bot iniciado (PID: $AS_PID, auto-restart activado)"
 
 # ─── Lanzar Daily Report Daemon ─────────────────────────────────────────────
 echo "Iniciando daily report daemon..."
