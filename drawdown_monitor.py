@@ -38,6 +38,17 @@ def check_drawdown(bot_name: str, current_capital: float, initial_capital: float
         # Reset alerts si se recupera
         _alerted.pop(f"{bot_name}_25", None)
         _alerted.pop(f"{bot_name}_50", None)
+        # Limpiar pausa del state file si el drawdown se recuperó
+        if state_file and state_file.exists():
+            try:
+                raw = json.loads(state_file.read_text())
+                if raw.get("paused"):
+                    raw["paused"] = False
+                    raw.pop("pause_reason", None)
+                    state_file.write_text(json.dumps(raw, indent=2))
+                    log.info(f"✅ Drawdown recuperado — {bot_name} reactivado")
+            except Exception:
+                pass
         return False
 
     # ── 50% Drawdown: CRITICAL + PAUSE ──────────────────────────────────────

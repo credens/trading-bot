@@ -619,10 +619,10 @@ def run_cycle(client, paper):
         if conf == "LOW":
             paper.add_log("LOW confidence — esperando")
         else:
-            # FIX: Verificar si ya tenemos una posición idéntica (misma dirección)
-            duplicate = any(t.side == action for t in open_trades)
-            if duplicate:
-                log.info(f"  🚫 {action} ignorado — ya existe posición abierta en esta dirección")
+            # Límite máximo de posiciones abiertas simultáneas
+            MAX_OPEN_POSITIONS = 5
+            if len(open_trades) >= MAX_OPEN_POSITIONS:
+                log.info(f"  🚫 {action} ignorado — máximo {MAX_OPEN_POSITIONS} posiciones abiertas")
                 return
 
             # Circuit breaker por dirección... (mismo código)
