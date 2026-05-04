@@ -866,9 +866,9 @@ function ScalpingPanel({ data, liveprices, onClose }) {
 
   const openTrades = [
     ...Object.values(data.positions || {}),
-    ...(data.open_trades || []).filter(t => t.bot === "scalping" || (t.id||"").startsWith("SC-"))
+    ...(data.open_trades || []),
   ].filter((t, i, arr) => arr.findIndex(x => (x.id && x.id === t.id) || (x.symbol && x.symbol === t.symbol)) === i);
-  const closed    = data.all_closed_trades || (data.closed_trades||[]).filter(t => t.bot==="scalping" || (t.id||"").startsWith("SC-") || !t.bot);
+  const closed    = data.all_closed_trades || (data.closed_trades || []);
   const btcLive   = liveprices?.["BTCUSDT"] || data.btc_price || 0;
 
   // Análisis técnico en vivo (1m)
