@@ -1283,7 +1283,7 @@ export default function Dashboard() {
           const prevTrades = prev.total_trades || (prev.closed_trades||[]).length;
           const prevWins   = Math.round((prev.win_rate||0) / 100 * prevTrades);
           const newTotalPnl = parseFloat(((prev.total_pnl||0) + pnl).toFixed(2));
-          const newCapital  = parseFloat(((prev.current_capital||200) + pnl).toFixed(2));
+          const newCapital  = parseFloat(((prev.current_capital||200) + size + pnl).toFixed(2));
           const newClosed   = [...(prev.closed_trades||[]), closedTrade].slice(-100);
           return {
             ...prev,
@@ -1351,7 +1351,7 @@ export default function Dashboard() {
       const prevTotalPnl = displayData.total_pnl || state.total_pnl || 0;
       const totalPnl     = parseFloat((prevTotalPnl + pnl).toFixed(2));
       const reservado    = newOpenPositions.reduce((s,p) => s+(p.size||p.size_usdt||0), 0);
-      const capital      = parseFloat(((state.initial_capital||500) - reservado + totalPnl).toFixed(2));
+      const capital      = parseFloat(((state.initial_capital||200) - reservado + totalPnl).toFixed(2));
       const prevTrades   = displayData.total_trades || state.total_trades || allClosed.length;
       const prevWins     = Math.round((displayData.win_rate||0) / 100 * prevTrades);
 
