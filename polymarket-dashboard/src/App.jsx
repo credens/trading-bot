@@ -10,7 +10,7 @@ const MOCK_ALT = {
 };
 
 const MOCK_SC = {
-  bot:"scalping", initial_capital:500, current_capital:500, total_pnl:0,
+  bot:"btc_scalp", initial_capital:200, current_capital:200, total_pnl:0,
   total_pnl_pct:0, win_rate:0, max_drawdown:0,
   btc_price:0, rsi:50, trend:"neutral",
   open_trades:[], closed_trades:[], cycle_log:[{time:"--:--", msg:"Esperando primer ciclo..."}],
@@ -1174,9 +1174,8 @@ function CodeEditor({ files }) {
 
 // ─── Dashboard Principal ───────────────────────────────────────────────────────
 export default function Dashboard() {
-  const [scData,  setScData]  = useState(() => lsLoad(LS_KEY.scalping,  MOCK_SC));
-  const [altData, setAltData] = useState(() => lsLoad(LS_KEY.altcoins,  MOCK_ALT));
-  const [asData,  setAsData]  = useState(() => lsLoad("tbot_as", { bot:"altscalp", current_capital:200, initial_capital:200, total_pnl:0, win_rate:0, max_drawdown:0, positions:{}, closed_trades:[], cycle_log:[], scanner_coins:[] }));
+  const [scData,  setScData]  = useState(() => lsLoad("tbot_btc", MOCK_SC));
+  const [asData,  setAsData]  = useState(() => lsLoad("tbot_alt", { bot:"alt_scalp", current_capital:200, initial_capital:200, total_pnl:0, win_rate:0, max_drawdown:0, positions:{}, closed_trades:[] }));
   const [liveprices, setLivePrices] = useState({});
   const lastManualClose = useRef(0);
   const manuallyClosed = useRef(new Set());
@@ -1207,15 +1206,14 @@ export default function Dashboard() {
         if (d && !d.error) { lsSave(lsKey, d); setter(d); }
       } catch {}
     };
-    await load("altcoins",  "/altcoin_data/state.json",                  setAltData, LS_KEY.altcoins);
-    await load("scalping",  "/paper_trading/scalping_state.json",       setScData,  LS_KEY.scalping);
-    await load("altscalp",  "/paper_trading/altscalp_state.json",       setAsData,  "tbot_as");
+    await load("btc",  "/paper_trading/btc_state.json",  setScData,  "tbot_btc");
+    await load("alt",  "/paper_trading/alt_state.json",  setAsData,  "tbot_alt");
     setLastFetch(new Date().toLocaleTimeString("es-AR"));
   }, [lastManualClose, manuallyClosed]);
 
   const fetchLivePrices = useCallback(async () => {
     const altScalpSyms = Object.values(asData.positions||{}).map(p=>p.symbol).filter(Boolean);
-    const symbols = ["BTCUSDT", ...(altData.open_positions||[]).map(p=>p.symbol).filter(Boolean), ...altScalpSyms];
+    const symbols = ["BTCUSDT", ...altScalpSyms];
     try {
       const prices = {};
       await Promise.all(symbols.map(async sym => {
@@ -1227,7 +1225,7 @@ export default function Dashboard() {
       }));
       if (Object.keys(prices).length > 0) setLivePrices(prev => ({...prev, ...prices}));
     } catch {}
-  }, [altData.open_positions, asData.positions]);
+  }, [asData.positions]);
 
   useEffect(() => {
     const t1 = setInterval(()=>setBlink(b=>!b), 800);
@@ -1244,8 +1242,8 @@ export default function Dashboard() {
   }, [fetchLivePrices]);
 
   const closePosition = useCallback(async (bot, pos, lp=liveprices) => {
-    const isBtcBot   = bot === "scalping";
-    const isAltScalp = bot === "altscalp";
+    const isBtcBot   = bot === "btc";
+    const isAltScalp = bot === "alt";
     const symbol     = pos.symbol || (isBtcBot ? "BTCUSDT" : pos.id) || "?";
     if (!confirm(`¿Cerrar posición de ${symbol} al precio actual?`)) return;
 
@@ -1304,8 +1302,8 @@ export default function Dashboard() {
         setTimeout(() => manuallyClosed.current.delete(symbol), 60000);
 
         // 3. Señalar al bot via manual_close en disco
-        const srvState = await fetch(`${LOCAL_API}/state/altscalp?t=${Date.now()}`).then(r=>r.json());
-        await fetch(`${LOCAL_API}/state/altscalp`, {
+        const srvState = await fetch(`${LOCAL_API}/state/alt?t=${Date.now()}`).then(r=>r.json());
+        await fetch(`${LOCAL_API}/state/alt`, {
           method: "POST", headers: {"Content-Type":"application/json"},
           body: JSON.stringify({
             ...srvState,
@@ -1318,7 +1316,7 @@ export default function Dashboard() {
 
     // ── Scalping / Altcoin: lógica existente ────────────────────────────────
     try {
-      const botKey = isBtcBot ? "scalping" : "altcoins";
+      const botKey = isBtcBot ? "btc" : "alt";
       const state  = await fetch(`${LOCAL_API}/state/${botKey}?t=${Date.now()}`).then(r=>r.json());
 
       const sym = isBtcBot ? "BTCUSDT" : symbol;
@@ -1343,7 +1341,7 @@ export default function Dashboard() {
         exit_reason: "MANUAL", pnl, pnl_pct: parseFloat((pnlPct*100).toFixed(2)), status: "CLOSED" };
 
       const closedTradeId = pos.id || symbol;
-      const displayData   = isBtcBot ? scData : altData;
+      const displayData   = isBtcBot ? scData : asData;
       const newOpenPositions = (displayData.open_positions||displayData.open_trades||[]).filter(p => p.symbol !== symbol && p.id !== closedTradeId);
       const newOpenTrades    = (displayData.open_trades||[]).filter(t => t.id !== closedTradeId && t.symbol !== symbol);
       const newPositions     = {...(displayData.positions||{})};
@@ -1372,7 +1370,7 @@ export default function Dashboard() {
         last_updated: new Date().toISOString(),
       };
 
-      if (isBtcBot) setScData(newState); else setAltData(newState);
+      if (isBtcBot) setScData(newState); else setAsData(newState);
       lastManualClose.current = Date.now();
       manuallyClosed.current.add(symbol);
       if (closedTradeId) manuallyClosed.current.add(closedTradeId);
@@ -1382,11 +1380,11 @@ export default function Dashboard() {
         await fetch(`${LOCAL_API}/state/${botKey}`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(newState)});
       } catch {}
     } catch(e) { console.error(e); alert("Error: " + e.message); }
-  }, [setScData, setAltData, setAsData, scData, altData, asData, lastManualClose, manuallyClosed, liveprices]);
+  }, [setScData, setAsData, scData, asData, lastManualClose, manuallyClosed, liveprices]);
 
 
-  const totalPnl     = (scData.total_pnl||0) + (altData.total_pnl||0) + (asData.total_pnl||0);
-  const totalCapital = (scData.current_capital||0) + (altData.current_capital||0) + (asData.current_capital||0);
+  const totalPnl     = (scData.total_pnl||0) + (asData.total_pnl||0);
+  const totalCapital = (scData.current_capital||0) + (asData.current_capital||0);
 
   return (
     <div style={{ background:"#050508", minHeight:"100vh", color:"#ccc", fontFamily:"'Courier New', monospace", padding:"0 0 40px" }}>
@@ -1407,7 +1405,7 @@ export default function Dashboard() {
       </div>
 
       {/* Alerta Global de Liquidez */}
-      {(scData.next_liquidity_check || altData.next_liquidity_check) && (
+      {(scData.next_liquidity_check || asData.next_liquidity_check) && (
         <div style={{ margin: "10px 28px -10px", padding: "8px 16px", background: "rgba(255, 184, 0, 0.1)", border: "1px solid rgba(255, 184, 0, 0.3)", borderRadius: 8, color: "#ffb800", fontSize: 12, display: "flex", alignItems: "center", gap: 10 }}>
           <span>⚠️</span>
           <span>MODO AHORRO: El mercado está fuera de horas peak o con bajo volumen. Los bots están en espera.</span>
@@ -1417,9 +1415,8 @@ export default function Dashboard() {
       {/* P&L Summary bar */}
       {(() => {
         const bots = [
-          { label:"SCALPING",  color:"#ff9933", data:scData  },
-          { label:"ALTCOINS",  color:"#cc88ff", data:altData },
-          { label:"ALTSCALP",  color:"#00ccff", data:asData  },
+          { label:"BTC SCALP",  color:"#ff9933", data:scData  },
+          { label:"ALT SCALP",  color:"#00ccff", data:asData  },
         ];
         return (
           <div style={{ borderBottom:"1px solid rgba(255,255,255,0.06)", padding:"10px 28px", display:"flex", alignItems:"center", gap:0, background:"rgba(0,0,0,0.2)" }}>
@@ -1470,14 +1467,10 @@ export default function Dashboard() {
         );
       })()}
 
-      {/* Top row: Scalping | Altcoins */}
+      {/* Top row: BTC Scalp | Alt Scalp */}
       <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:20, padding:"20px 28px 0" }}>
-        <ScalpingPanel data={scData} liveprices={liveprices} onClose={(pos)=>closePosition("scalping", pos)} />
-        <AltcoinPanel data={altData} liveprices={liveprices} onClose={(pos)=>closePosition("altcoin", pos)} />
-      </div>
-      {/* Bottom row: AltScalp HFT */}
-      <div style={{ padding:"20px 28px 0" }}>
-        <AltScalpPanel data={asData} liveprices={liveprices} onClose={(pos)=>closePosition("altscalp", pos)} />
+        <ScalpingPanel data={scData} liveprices={liveprices} onClose={(pos)=>closePosition("btc", pos)} />
+        <AltScalpPanel data={asData} liveprices={liveprices} onClose={(pos)=>closePosition("alt", pos)} />
       </div>
 
       <div style={{ margin:"0 28px", padding:"12px 18px", background:"rgba(0,255,136,0.03)", border:"1px solid rgba(0,255,136,0.1)", borderRadius:10, fontSize:11, color:"#ccc" }}>

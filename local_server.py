@@ -23,10 +23,8 @@ log = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).parent
 
 STATE_FILES = {
-    "altcoins":  BASE_DIR / "altcoin_data" / "state.json",
-    "rsi":       BASE_DIR / "rsi_bot_data" / "state.json",
-    "scalping":  BASE_DIR / "paper_trading" / "scalping_state.json",
-    "altscalp":  BASE_DIR / "paper_trading" / "altscalp_state.json",
+    "btc":       BASE_DIR / "paper_trading" / "btc_state.json",
+    "alt":       BASE_DIR / "paper_trading" / "alt_state.json",
 }
 
 EDITABLE_FILES = [

@@ -25,24 +25,26 @@ STATE_DIR.mkdir(exist_ok=True)
 @dataclass
 class Trade:
     id: str
-    bot: str                    # "scalping" | "altcoin"
-    side: str                   # "LONG" | "SHORT"
+    bot: str
+    side: str
     entry_price: float
     entry_time: str
-    size: float                 # USDT
+    size: float
     stop_loss: float
     take_profit: float
     exit_price: Optional[float] = None
     exit_time: Optional[str] = None
-    exit_reason: Optional[str] = None  # "STOP_LOSS" | "TAKE_PROFIT" | "SIGNAL" | "MANUAL"
+    exit_reason: Optional[str] = None
     pnl: Optional[float] = None
     pnl_pct: Optional[float] = None
-    status: str = "OPEN"        # "OPEN" | "CLOSED"
+    status: str = "OPEN"
     reasoning: str = ""
     confidence: str = ""
     leverage: int = 1
     best_price: Optional[float] = None
-    entry_adx: Optional[float] = None   # ADX al momento de entrada (para detectar degradación)
+    entry_adx: Optional[float] = None
+    breakeven_activated: bool = False  # Añadido para evitar errores de reconstrucción
+    symbol: Optional[str] = None
 
 
 @dataclass
@@ -81,15 +83,23 @@ class PaperTradingEngine:
     def _load_or_create(self, initial_capital: float) -> BotState:
         if self.state_file.exists():
             try:
-                data = json.loads(self.state_file.read_text())
+                content = self.state_file.read_text()
+                if not content.strip():
+                    raise ValueError("Archivo de estado vacío")
+                
+                data = json.loads(content)
                 state = BotState(**{k: v for k, v in data.items() if k in BotState.__dataclass_fields__})
-                # Reconstruir trades
-                state.open_trades = [Trade(**t) for t in data.get("open_trades", [])]
-                state.closed_trades = [Trade(**t) for t in data.get("closed_trades", [])[-50:]]  # últimos 50
-                log.info(f"[{self.bot}] Estado cargado: ${state.current_capital:.2f} | {len(state.open_trades)} trades abiertos")
+                
+                # Reconstrucción robusta de trades (filtrando campos desconocidos)
+                def make_trade(t_dict):
+                    valid_fields = {k: v for k, v in t_dict.items() if k in Trade.__dataclass_fields__}
+                    return Trade(**valid_fields)
+
+                state.open_trades = [make_trade(t) for t in data.get("open_trades", [])]
+                state.closed_trades = [make_trade(t) for t in data.get("closed_trades", [])[-50:]]
                 return state
             except Exception as e:
-                log.warning(f"Error cargando estado: {e} — creando nuevo")
+                log.error(f"[{self.bot}] Error cargando estado: {e}")
 
         state = BotState(
             bot=self.bot,
@@ -100,29 +110,18 @@ class PaperTradingEngine:
         return state
 
     def save(self):
-        # Respetar cierres manuales: si el disco tiene más trades cerrados o el flag manual_close,
-        # filtrar open_trades para no sobrescribir trades ya cerrados manualmente.
+        """Guarda el estado en disco de forma segura."""
         try:
-            if self.state_file.exists():
-                disk = json.loads(self.state_file.read_text())
-                disk_closed = disk.get("closed_trades", [])
-                mem_closed = self.state.closed_trades
-                if len(disk_closed) > len(mem_closed):
-                    closed_ids = {t.get("id") for t in disk_closed if t.get("id")}
-                    self.state.open_trades = [t for t in self.state.open_trades if t.id not in closed_ids]
-                    # Reconstruir closed_trades desde disco
-                    self.state.closed_trades = [
-                        Trade(**{k: v for k, v in t.items() if k in Trade.__dataclass_fields__})
-                        for t in disk_closed
-                    ]
-                if disk.get("manual_close"):
-                    # Limpiar el flag en el objeto que vamos a guardar
-                    disk["manual_close"] = False
-        except Exception:
-            pass
-
-        data = asdict(self.state)
-        self.state_file.write_text(json.dumps(data, indent=2, default=str))
+            data = asdict(self.state)
+            temp_path = self.state_file.with_suffix(".tmp")
+            
+            # Escribir en archivo temporal primero para evitar corrupción
+            temp_path.write_text(json.dumps(data, indent=2, default=str))
+            
+            # Renombrar de forma atómica
+            temp_path.replace(self.state_file)
+        except Exception as e:
+            log.error(f"Error guardando estado: {e}")
 
     def add_log(self, msg: str):
         entry = {"time": datetime.now().strftime("%H:%M:%S"), "msg": msg}
@@ -181,21 +180,97 @@ class PaperTradingEngine:
         dd = (self.state.peak_capital - self.state.current_capital) / self.state.peak_capital * 100
         self.state.max_drawdown = max(self.state.max_drawdown, dd)
 
-    def update_market_data(self, **kwargs):
-        """Actualiza datos de mercado en el estado (para el dashboard)."""
+    def update_market_data(self, btc_price: float, **kwargs):
+        """Actualiza datos de mercado y recalcula P&L de posiciones abiertas."""
+        self.state.btc_price = btc_price
         for k, v in kwargs.items():
             if hasattr(self.state, k):
                 setattr(self.state, k, v)
+        
+        # Recalcular P&L flotante para que el capital refleje la realidad
+        for trade in self.state.open_trades:
+            if trade.side == "LONG":
+                trade.pnl_pct = round((btc_price - trade.entry_price) / trade.entry_price * 100 * trade.leverage, 2)
+            else:
+                trade.pnl_pct = round((trade.entry_price - btc_price) / trade.entry_price * 100 * trade.leverage, 2)
+            trade.pnl = round(trade.pnl_pct / 100 * trade.size, 2)
+
         self.state.last_updated = datetime.now().isoformat()
         self.save()
+
+    def open_trade(self, bot: str, symbol: str, side: str, size: float,
+                   leverage: int, entry_price: float, sl_pct: float, tp_pct: float):
+        """Open a paper trade. Deducts size from current_capital."""
+        if side == "LONG":
+            sl = round(entry_price * (1 - sl_pct), 8)
+            tp = round(entry_price * (1 + tp_pct), 8)
+        else:
+            sl = round(entry_price * (1 + sl_pct), 8)
+            tp = round(entry_price * (1 - tp_pct), 8)
+        tid = f"{bot[:3].upper()}-{datetime.now().strftime('%H%M%S%f')[:12]}"
+        trade = Trade(
+            id=tid, bot=bot, symbol=symbol, side=side,
+            entry_price=entry_price, entry_time=datetime.now().isoformat(),
+            size=size, stop_loss=sl, take_profit=tp, leverage=leverage,
+        )
+        self.state.open_trades.append(trade)
+        self.state.current_capital -= size
+        self.state.trades_today += 1
+        self.add_log(f"📈 {side} {symbol} | {leverage}x | ${size:.0f} | TP:{tp_pct*100:.2f}% SL:{sl_pct*100:.2f}%")
+        log.info(f"  [PAPER] OPEN {side} {symbol} @ {entry_price} size:{size} lev:{leverage}x")
+        return trade
+
+    def close_by_symbol(self, symbol: str, exit_price: float, reason: str, bot: str = None) -> float:
+        """Close open trade by symbol. Returns PnL."""
+        for trade in list(self.state.open_trades):
+            if trade.symbol == symbol and (bot is None or trade.bot == bot):
+                self._close_trade(trade, exit_price, reason)
+                self.state.open_trades.remove(trade)
+                self.save()
+                return trade.pnl or 0.0
+        return 0.0
+
+    def check_stops(self, prices: dict, bot: str = None) -> list:
+        """Check SL/TP for all open trades. Returns list of closed Trade objects."""
+        closed = []
+        for trade in list(self.state.open_trades):
+            if bot and trade.bot != bot:
+                continue
+            sym = getattr(trade, "symbol", None) or ""
+            price = prices.get(sym)
+            if not price:
+                continue
+            if trade.side == "LONG":
+                hit_sl = price <= trade.stop_loss
+                hit_tp = price >= trade.take_profit
+            else:
+                hit_sl = price >= trade.stop_loss
+                hit_tp = price <= trade.take_profit
+            if hit_sl or hit_tp:
+                reason = "STOP_LOSS" if hit_sl else "TAKE_PROFIT"
+                exit_px = trade.stop_loss if hit_sl else trade.take_profit
+                self._close_trade(trade, exit_px, reason)
+                self.state.open_trades.remove(trade)
+                closed.append(trade)
+        if closed:
+            self.save()
+        return closed
 
 
 # ─── Factory ──────────────────────────────────────────────────────────────────
 
 SCALPING_STATE = STATE_DIR / "scalping_state.json"
+BTC_STATE      = STATE_DIR / "btc_state.json"
+ALT_STATE      = STATE_DIR / "alt_state.json"
 
 def get_scalping_engine(initial_capital: float = 200.0) -> PaperTradingEngine:
     return PaperTradingEngine("scalping", initial_capital, SCALPING_STATE)
+
+def get_btc_engine(initial_capital: float = 200.0) -> PaperTradingEngine:
+    return PaperTradingEngine("btc_scalp", initial_capital, BTC_STATE)
+
+def get_alt_engine(initial_capital: float = 200.0) -> PaperTradingEngine:
+    return PaperTradingEngine("alt_scalp", initial_capital, ALT_STATE)
 
 
 # ─── Scalping-specific methods (monkey-patched onto PaperTradingEngine) ──────

@@ -1,20 +1,12 @@
 #!/bin/bash
 
 # ─── Trading Bot HQ Launcher ───────────────────────────────────────────────────
-# Lanza: Scalping BTC + Altcoins + Dashboard
+# Lanza: BTC Scalp + Alt Scalp + Dashboard
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BOT_DIR="$SCRIPT_DIR"
 DASHBOARD_DIR="$SCRIPT_DIR/polymarket-dashboard"
 LOG_FILE="$SCRIPT_DIR/bot.log"
-
-
-# RSI Bot
-RSI_DATA_DIR="$SCRIPT_DIR/rsi_bot_data"
-
-# Altcoin Bot
-ALTCOIN_DATA_DIR="$SCRIPT_DIR/altcoin_data"
-RSI_STATE="$RSI_DATA_DIR/state.json"
 
 echo ""
 echo "🤖 Trading Bot HQ"
@@ -48,28 +40,21 @@ echo "Iniciando state server..."
 nohup $PYTHON local_server.py >> "$LOG_FILE" 2>&1 &
 SS_PID=$!
 echo $SS_PID > "$SCRIPT_DIR/.stateserver.pid"
-echo "✓ State server iniciado (PID: $SS_PID) → localhost:8765"
+echo "✓ State server iniciado (PID: $SS_PID) → localhost:8082"
 
-# ─── Lanzar Scalping Bot ─────────────────────────────────────────────────────
-echo "Iniciando Scalping BTC 1m bot..."
-nohup $PYTHON scalping_bot.py >> "$LOG_FILE" 2>&1 &
-SC_PID=$!
-echo $SC_PID > "$SCRIPT_DIR/.scalping.pid"
-echo "✓ Scalping bot iniciado (PID: $SC_PID)"
+# ─── Lanzar BTC Scalp Bot ────────────────────────────────────────────────────
+echo "Iniciando BTC Scalp bot..."
+nohup $PYTHON btc_scalp.py >> "$LOG_FILE" 2>&1 &
+BTC_PID=$!
+echo $BTC_PID > "$SCRIPT_DIR/.btcscalp.pid"
+echo "✓ BTC Scalp bot iniciado (PID: $BTC_PID)"
 
-# ─── Lanzar Altcoin Bot ──────────────────────────────────────────────────────
-echo "Iniciando Multi-Altcoin bot..."
-nohup $PYTHON altcoin_bot.py >> "$LOG_FILE" 2>&1 &
+# ─── Lanzar Alt Scalp Bot ────────────────────────────────────────────────────
+echo "Iniciando Alt Scalp bot..."
+nohup $PYTHON alt_scalp.py >> "$LOG_FILE" 2>&1 &
 ALT_PID=$!
-echo $ALT_PID > "$SCRIPT_DIR/.altcoin.pid"
-echo "✓ Altcoin bot iniciado (PID: $ALT_PID)"
-
-# ─── Lanzar AltScalp HFT Bot (con auto-restart) ──────────────────────────────
-echo "Iniciando AltScalp HFT bot..."
-nohup bash -c "cd \"$BOT_DIR\"; while true; do $PYTHON altscalp_bot.py; echo '[altscalp] reiniciando en 5s...'; sleep 5; done" >> "$LOG_FILE" 2>&1 &
-AS_PID=$!
-echo $AS_PID > "$SCRIPT_DIR/.altscalp.pid"
-echo "✓ AltScalp bot iniciado (PID: $AS_PID, auto-restart activado)"
+echo $ALT_PID > "$SCRIPT_DIR/.altscalp.pid"
+echo "✓ Alt Scalp bot iniciado (PID: $ALT_PID)"
 
 # ─── Lanzar Daily Report Daemon ─────────────────────────────────────────────
 echo "Iniciando daily report daemon..."
@@ -104,21 +89,10 @@ fi
 
 echo ""
 echo "✅ Todo corriendo!"
-echo "   Scalping BTC: ciclos cada 30s"
-echo "   Altcoins:     ciclos cada 1 min (top 20 por volumen)"
+echo "   BTC Scalp:  ciclos cada 30s | 09:00-15:00 ARG"
+echo "   Alt Scalp:  ciclos cada 30s | 09:00-15:00 ARG"
 echo "   Log: tail -f $LOG_FILE"
 echo ""
 
-osascript -e 'display notification "Scalping + Altcoins iniciados" with title "Trading Bot HQ" subtitle "Dashboard en localhost:5173"'
+osascript -e 'display notification "BTC Scalp + Alt Scalp iniciados" with title "Trading Bot HQ" subtitle "Dashboard en localhost:5173"'
 tail -f "$LOG_FILE"
-
-# ─── Sincronizar paper trading state con dashboard ────────────────────────────
-if [ "$HAS_NODE" = true ]; then
-    mkdir -p "$DASHBOARD_DIR/public/paper_trading"
-    # Symlinks para que Vite sirva los JSON del paper trading
-    mkdir -p "$DASHBOARD_DIR/public/rsi_bot_data"
-    ln -sf "$BOT_DIR/rsi_bot_data/state.json" "$DASHBOARD_DIR/public/rsi_bot_data/state.json" 2>/dev/null
-        mkdir -p "$DASHBOARD_DIR/public/altcoin_data"
-    ln -sf "$BOT_DIR/altcoin_data/state.json" "$DASHBOARD_DIR/public/altcoin_data/state.json" 2>/dev/null
-    echo "✓ Paper trading states vinculados al dashboard"
-fi
