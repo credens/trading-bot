@@ -493,13 +493,68 @@ def update_trailing_stop(open_trade, price: float, atr: float = 0) -> Optional[f
 
 
 # ─── Ciclo Principal ──────────────────────────────────────────────────────────
+def handle_manual_close(client, paper) -> bool:
+    """Procesa cierres manuales del dashboard en cualquier horario."""
+    try:
+        if not SCALPING_STATE.exists():
+            return False
+        raw = _json.loads(SCALPING_STATE.read_text())
+        manual_close = raw.get("manual_close")
+        if not manual_close:
+            return False
+
+        requests = manual_close if isinstance(manual_close, list) else ["__first__"]
+        log.info(f"🛑 Cierre manual solicitado: {requests}")
+        df_tmp = fetch_1m(client, limit=5)
+        exit_price = float(df_tmp["close"].iloc[-1])
+
+        for request in requests:
+            if request == "__first__":
+                pos = paper.get_scalping_position()
+                if pos:
+                    paper.close_by_id(pos.id, exit_price, "MANUAL", bot="scalping")
+            elif request == "BTCUSDT":
+                paper.close_scalping_position(exit_price, "MANUAL")
+            else:
+                pnl = paper.close_by_id(str(request), exit_price, "MANUAL", bot="scalping")
+                if pnl == 0:
+                    paper.close_by_symbol(str(request), exit_price, "MANUAL", bot="scalping")
+
+        latest = _json.loads(SCALPING_STATE.read_text())
+        latest["manual_close"] = []
+        latest["cooldown_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
+        SCALPING_STATE.write_text(_json.dumps(latest, indent=2))
+        paper.state = paper._load_or_create(SCALP_CAPITAL)
+        return True
+    except Exception as e:
+        log.warning(f"Error en cierre manual: {e}")
+        return False
+
+
 def run_cycle(client, paper):
     log.info(f"── CICLO {datetime.now().strftime('%H:%M:%S')} ──────────────────────────")
+
+    handle_manual_close(client, paper)
 
     # Bloqueo nocturno: Argentina 15:00-09:00 (UTC 18:00-12:00) son horas de pérdida
     _arg_hour = (datetime.now(timezone.utc) + timedelta(hours=-3)).hour
     if not (9 <= _arg_hour < 15):
-        log.info(f"  ⏸ Horario nocturno ({_arg_hour}:xx ARG) — sin operaciones 15:00-09:00 ARG")
+        try:
+            df = fetch_1m(client)
+            ind = calc_indicators(df)
+            price = ind["price"]
+            paper.check_scalping_stops(price)
+            paper.update_breakeven_stop(price)
+            paper.update_market_data(
+                btc_price=price, rsi=ind["rsi"],
+                trend=ind["ema_trend"], macd_cross="bullish" if ind["macd_hist"] > 0 else "bearish",
+                vol_ratio=ind["vol_ratio"],
+            )
+            open_trades = [t for t in paper.state.open_trades if t.bot == "scalping"]
+            paper.add_log(f"Fuera de horario — monitoreando {len(open_trades)} pos abiertas")
+            log.info(f"  ⏸ Horario nocturno ({_arg_hour}:xx ARG) — sin nuevas entradas | {len(open_trades)} pos monitoreadas")
+        except Exception as e:
+            log.warning(f"  ⏸ Horario nocturno — error monitoreando posición: {e}")
         paper.save()
         return
 
@@ -528,26 +583,6 @@ def run_cycle(client, paper):
         paper.add_log(f"🛑 Daily loss limit {today_pnl:.2f}")
         paper.save()
         return
-
-    # 0. Cierre manual desde dashboard
-    try:
-        if SCALPING_STATE.exists():
-            raw = _json.loads(SCALPING_STATE.read_text())
-            if raw.get("manual_close"):
-                log.info("🛑 Cierre manual solicitado")
-                pos = paper.get_scalping_position()
-                if pos:
-                    df_tmp = fetch_1m(client, limit=5)
-                    paper.close_scalping_position(float(df_tmp["close"].iloc[-1]), "MANUAL")
-                
-                # IMPORTANTE: Después de cerrar, limpiar el flag en el archivo
-                raw["manual_close"] = False
-                raw["cooldown_until"] = (datetime.now() + timedelta(minutes=5)).isoformat()
-                SCALPING_STATE.write_text(_json.dumps(raw, indent=2))
-                # Recargar estado en memoria para que el bot sepa que está FLAT
-                paper.state = paper._load_or_create(SCALP_CAPITAL)
-    except Exception as e:
-        log.warning(f"Error en cierre manual: {e}")
 
     # 1. Datos e indicadores PRIMERO (necesitamos precio real)
     df  = fetch_1m(client)

@@ -42,19 +42,19 @@ SS_PID=$!
 echo $SS_PID > "$SCRIPT_DIR/.stateserver.pid"
 echo "✓ State server iniciado (PID: $SS_PID) → localhost:8082"
 
-# ─── Lanzar BTC Scalp Bot ────────────────────────────────────────────────────
+# ─── Lanzar BTC Scalping Bot ─────────────────────────────────────────────────
 echo "Iniciando BTC Scalp bot..."
-nohup $PYTHON btc_scalp.py >> "$LOG_FILE" 2>&1 &
+nohup $PYTHON scalping_bot.py >> "$LOG_FILE" 2>&1 &
 BTC_PID=$!
 echo $BTC_PID > "$SCRIPT_DIR/.btcscalp.pid"
 echo "✓ BTC Scalp bot iniciado (PID: $BTC_PID)"
 
-# ─── Lanzar Alt Scalp Bot ────────────────────────────────────────────────────
-echo "Iniciando Alt Scalp bot..."
-nohup $PYTHON alt_scalp.py >> "$LOG_FILE" 2>&1 &
+# ─── Lanzar AltScalp Bot ─────────────────────────────────────────────────────
+echo "Iniciando AltScalp bot..."
+nohup $PYTHON altscalp_bot.py >> "$LOG_FILE" 2>&1 &
 ALT_PID=$!
 echo $ALT_PID > "$SCRIPT_DIR/.altscalp.pid"
-echo "✓ Alt Scalp bot iniciado (PID: $ALT_PID)"
+echo "✓ AltScalp bot iniciado (PID: $ALT_PID)"
 
 # ─── Lanzar Daily Report Daemon ─────────────────────────────────────────────
 echo "Iniciando daily report daemon..."
@@ -89,8 +89,8 @@ fi
 
 echo ""
 echo "✅ Todo corriendo!"
-echo "   BTC Scalp:  ciclos cada 30s | 09:00-15:00 ARG"
-echo "   Alt Scalp:  ciclos cada 30s | 09:00-15:00 ARG"
+echo "   BTC Scalp:  ciclos según scalping_bot.py | 09:00-15:00 ARG"
+echo "   AltScalp:   ciclos según altscalp_bot.py | 09:00-15:00 ARG"
 echo "   Log: tail -f $LOG_FILE"
 echo ""
 

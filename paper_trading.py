@@ -9,6 +9,7 @@ Comparte estado con el dashboard via JSON.
 import json
 import time
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass, field, asdict
@@ -230,6 +231,16 @@ class PaperTradingEngine:
                 return trade.pnl or 0.0
         return 0.0
 
+    def close_by_id(self, trade_id: str, exit_price: float, reason: str, bot: str = None) -> float:
+        """Close an open trade by id. Returns PnL."""
+        for trade in list(self.state.open_trades):
+            if trade.id == trade_id and (bot is None or trade.bot == bot):
+                self._close_trade(trade, exit_price, reason)
+                self.state.open_trades.remove(trade)
+                self.save()
+                return trade.pnl or 0.0
+        return 0.0
+
     def check_stops(self, prices: dict, bot: str = None) -> list:
         """Check SL/TP for all open trades. Returns list of closed Trade objects."""
         closed = []
@@ -277,7 +288,8 @@ def get_alt_engine(initial_capital: float = 200.0) -> PaperTradingEngine:
 
 def _open_scalping_trade(self, decision: dict, current_price: float, capital: float, leverage: int):
     side = decision["decision"]
-    pos_pct = min(float(decision.get("position_size_pct", 0.15)), 0.25)
+    max_pos_pct = float(os.getenv("SCALP_MAX_POS_PCT", "0.50"))
+    pos_pct = min(float(decision.get("position_size_pct", 0.15)), max_pos_pct)
     sl_pct  = float(decision.get("stop_loss_pct", 0.004))
     tp_pct  = float(decision.get("take_profit_pct", 0.008))
     size    = round(capital * pos_pct, 2)

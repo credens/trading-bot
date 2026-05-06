@@ -11,6 +11,8 @@ for pidfile in .btcscalp.pid .altscalp.pid .dailyreport.pid .stateserver.pid .da
     fi
 done
 
+pkill -f "scalping_bot.py" 2>/dev/null
+pkill -f "altscalp_bot.py" 2>/dev/null
 pkill -f "btc_scalp.py" 2>/dev/null
 pkill -f "alt_scalp.py" 2>/dev/null
 pkill -f "daily_report.py" 2>/dev/null

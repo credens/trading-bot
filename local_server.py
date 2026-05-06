@@ -23,17 +23,23 @@ log = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).parent
 
 STATE_FILES = {
-    "btc":       BASE_DIR / "paper_trading" / "btc_state.json",
-    "alt":       BASE_DIR / "paper_trading" / "alt_state.json",
+    # Dashboard aliases. These point to the bots the UI actually renders.
+    "btc":       BASE_DIR / "paper_trading" / "scalping_state.json",
+    "alt":       BASE_DIR / "paper_trading" / "altscalp_state.json",
+    # Explicit legacy/raw aliases kept for scripts or manual inspection.
+    "btc_raw":   BASE_DIR / "paper_trading" / "btc_state.json",
+    "alt_raw":   BASE_DIR / "paper_trading" / "alt_state.json",
+    "scalping":  BASE_DIR / "paper_trading" / "scalping_state.json",
+    "altscalp":  BASE_DIR / "paper_trading" / "altscalp_state.json",
 }
 
 EDITABLE_FILES = [
-    "altcoin_bot.py",
     "scalping_bot.py",
-    "market_scenario.py",
+    "altscalp_bot.py",
     "notifications.py",
     "trade_logger.py",
     "daily_report.py",
+    "market_scenario.py",
     "local_server.py"
 ]
 
@@ -97,7 +103,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, {"error": str(e)})
             return
 
-        # GET /state/binance  GET /state/altcoins  GET /state/rsi
+        # GET /state/btc  GET /state/alt
         if len(parts) == 2 and parts[0] == "state":
             bot = parts[1]
             path = STATE_FILES.get(bot)
@@ -143,7 +149,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(403, {"error": "forbidden"})
             return
 
-        # POST /state/binance  body=JSON completo del estado
+        # POST /state/btc  body=JSON completo del estado
         if len(parts) == 2 and parts[0] == "state":
             bot = parts[1]
             path = STATE_FILES.get(bot)
@@ -175,8 +181,10 @@ if __name__ == "__main__":
     port = 8082
     server = HTTPServer(("0.0.0.0", port), Handler)
     log.info(f"Local state server corriendo en http://localhost:{port}")
-    log.info("  GET  /state/altcoins  — leer estado Altcoins")
-    log.info("  POST /state/altcoins  — escribir estado Altcoins")
+    log.info("  GET  /state/btc  — leer estado BTC scalping")
+    log.info("  POST /state/btc  — escribir estado BTC scalping")
+    log.info("  GET  /state/alt  — leer estado AltScalp")
+    log.info("  POST /state/alt  — escribir estado AltScalp")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

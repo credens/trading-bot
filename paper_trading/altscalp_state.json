@@ -10,9 +10,55 @@
   "win_rate": 0.0,
   "max_drawdown": 0.0,
   "trades_today": 0,
-  "cycle_log": [],
-  "last_updated": "",
-  "scanner_coins": [],
+  "cycle_log": [
+    {
+      "time": "23:17:54",
+      "msg": "Fuera de horario operativo \u2014 esperando 09:00 ARG"
+    }
+  ],
+  "last_updated": "2026-05-04T23:37:09.930487",
+  "scanner_coins": [
+    {
+      "symbol": "BSBUSDT",
+      "volume": 538.0,
+      "change_pct": 55.3
+    },
+    {
+      "symbol": "SKYAIUSDT",
+      "volume": 590.0,
+      "change_pct": 26.21
+    },
+    {
+      "symbol": "ETHUSDT",
+      "volume": 9203.0,
+      "change_pct": 0.7
+    },
+    {
+      "symbol": "MEGAUSDT",
+      "volume": 256.0,
+      "change_pct": 7.45
+    },
+    {
+      "symbol": "BZUSDT",
+      "volume": 521.0,
+      "change_pct": 2.03
+    },
+    {
+      "symbol": "SOLUSDT",
+      "volume": 1546.0,
+      "change_pct": 0.1
+    },
+    {
+      "symbol": "XRPUSDT",
+      "volume": 492.0,
+      "change_pct": 0.22
+    },
+    {
+      "symbol": "BNBUSDT",
+      "volume": 201.0,
+      "change_pct": 0.4
+    }
+  ],
   "cooldowns": {},
   "manual_close": []
 }

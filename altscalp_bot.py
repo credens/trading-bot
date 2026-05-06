@@ -413,12 +413,16 @@ def monitor_positions(client, state):
 
 # ── Ciclo Principal ────────────────────────────────────────────────────────────
 def run_cycle(client):
-    # Bloqueo nocturno: solo operar 09:00-15:00 Argentina (12:00-18:00 UTC)
+    state = load_state()
+
+    # Bloqueo nocturno: solo operar 09:00-15:00 Argentina (12:00-18:00 UTC).
+    # Igual guardamos heartbeat para que el dashboard no parezca muerto.
     _arg_hour = (datetime.now(timezone.utc) + timedelta(hours=-3)).hour
     if not (9 <= _arg_hour < 15):
+        if not state.get("cycle_log") or "Fuera de horario" not in state["cycle_log"][0].get("msg", ""):
+            add_log(state, "Fuera de horario operativo — esperando 09:00 ARG")
+        save_state(state)
         return
-
-    state = load_state()
 
     now_local = datetime.now()
     cap   = state.get("current_capital", CAPITAL)

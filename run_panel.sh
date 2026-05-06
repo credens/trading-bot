@@ -1,22 +1,16 @@
 #!/bin/bash
 
-# --- Configuración Hardcodeada ---
-REMOTE_IP="66.97.46.138"
-REMOTE_PORT="5905"
-REMOTE_USER="root"
-REMOTE_PASS="F3d3R1c0"
-API_PORT="8082"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DASHBOARD_DIR="$SCRIPT_DIR/polymarket-dashboard"
+PYTHON="${PYTHON:-python3}"
 
-echo "🔪 Saneando conexiones locales..."
-pkill -9 -f "ssh.*-L $API_PORT" 2>/dev/null
-sleep 1
+echo "Iniciando state server local..."
+if ! lsof -nP -iTCP:8082 -sTCP:LISTEN >/dev/null 2>&1; then
+    nohup "$PYTHON" "$SCRIPT_DIR/local_server.py" >> "$SCRIPT_DIR/logs/server.log" 2>&1 &
+    echo $! > "$SCRIPT_DIR/.stateserver.pid"
+    sleep 1
+fi
 
-echo "🔗 Abriendo Túnel SSH (Puerto $API_PORT)..."
-# Abre el túnel en background sin ejecutar comandos remotos
-sshpass -p "$REMOTE_PASS" ssh -o StrictHostKeyChecking=no -p $REMOTE_PORT -L $API_PORT:localhost:$API_PORT $REMOTE_USER@$REMOTE_IP -N &
-
-echo "✅ Túnel establecido."
-echo "💻 Lanzando Dashboard Local..."
-
-cd "/Users/credens/web/polymarket/polymarket-dashboard"
+echo "Iniciando dashboard..."
+cd "$DASHBOARD_DIR" || exit 1
 npm run dev -- --port 5173

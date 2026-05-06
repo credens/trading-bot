@@ -1,14 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 
-// ─── Mock fallback cuando no hay datos reales ──────────────────────────────
-const MOCK_ALT = {
-  bot:"altcoins", initial_capital:500, current_capital:500,
-  total_pnl:0, total_pnl_pct:0, win_rate:0, total_trades:0,
-  open_positions:[], positions:{}, closed_trades:[],
-  cycle_log:[{time:"--:--", msg:"Esperando primer ciclo..."}],
-  last_scan:[], scanning:false,
-};
-
 const MOCK_SC = {
   bot:"btc_scalp", initial_capital:200, current_capital:200, total_pnl:0,
   total_pnl_pct:0, win_rate:0, max_drawdown:0,
@@ -40,7 +31,7 @@ const PnlDisplay = ({ pnl, pct }) => {
 };
 
 // ─── BTC Candlestick Chart ─────────────────────────────────────────────────────
-function BTCChart({ entryPrice, side, stopLoss, takeProfit, defaultInterval = "1m" }) {
+function BTCChart({ entryPrice, side, stopLoss, defaultInterval = "1m" }) {
   const [allCandles, setAllCandles] = useState([]);
   const [interval, setIntervalVal] = useState(defaultInterval);
   const [visibleCount, setVisibleCount] = useState(80);
@@ -62,15 +53,12 @@ function BTCChart({ entryPrice, side, stopLoss, takeProfit, defaultInterval = "1
           l: parseFloat(k[3]), c: parseFloat(k[4]),
           t: parseInt(k[0]),
         })));
-      } catch {}
+      } catch { /* ignore transient market-data errors */ }
     };
     load();
     const t = setInterval(load, interval === "1m" ? 10000 : 30000);
     return () => clearInterval(t);
   }, [interval]);
-
-  // Reset zoom/pan on interval change
-  useEffect(() => { setVisibleCount(80); setPanOffset(0); setYZoom(1); }, [interval]);
 
   // Wheel zoom & pan
   useEffect(() => {
@@ -150,7 +138,6 @@ function BTCChart({ entryPrice, side, stopLoss, takeProfit, defaultInterval = "1
 
   // ── RSI (14) — compute on all data, slice to visible ─────────────────────────
   const allCloses = allCandles.map(c => c.c);
-  const closes = candles.map(c => c.c);
   const allRsi = (() => {
     const vals = new Array(allCloses.length).fill(null);
     if (allCloses.length < 15) return vals;
@@ -188,7 +175,7 @@ function BTCChart({ entryPrice, side, stopLoss, takeProfit, defaultInterval = "1
     <div ref={chartRef} style={{ marginBottom:14, cursor: isDragging ? "grabbing" : "grab", userSelect:"none" }}>
       <div style={{ display:"flex", gap:4, marginBottom:6, alignItems:"center" }}>
         {["1m","5m","15m","1h"].map(iv => (
-          <button key={iv} onClick={()=>setIntervalVal(iv)} style={{ background:interval===iv?"rgba(255,184,0,0.15)":"transparent", border:`1px solid ${interval===iv?"#ffb80055":"#333"}`, color:interval===iv?"#ffb800":"#bbb", borderRadius:5, padding:"3px 8px", fontSize:10, cursor:"pointer", fontFamily:"monospace" }}>{iv}</button>
+          <button key={iv} onClick={()=>{setIntervalVal(iv); setVisibleCount(80); setPanOffset(0); setYZoom(1);}} style={{ background:interval===iv?"rgba(255,184,0,0.15)":"transparent", border:`1px solid ${interval===iv?"#ffb80055":"#333"}`, color:interval===iv?"#ffb800":"#bbb", borderRadius:5, padding:"3px 8px", fontSize:10, cursor:"pointer", fontFamily:"monospace" }}>{iv}</button>
         ))}
         <span style={{ color:"#bbb", fontSize:10, marginLeft:8 }}>
           ${candles[candles.length-1]?.c.toLocaleString()}
@@ -308,7 +295,7 @@ function BTCChart({ entryPrice, side, stopLoss, takeProfit, defaultInterval = "1
 }
 
 // ─── Bot Status Badge ──────────────────────────────────────────────────────────
-function BotStatus({ data, isScalping = false }) {
+function BotStatus({ data }) {
   const now = new Date();
   const parseUTC = s => { try { return new Date(s); } catch { return null; } };
   const cbLong  = parseUTC(data.blocked_long_until);
@@ -657,8 +644,7 @@ function AltScalpPanel({ data, liveprices, onClose }) {
 
       {/* Stats bar */}
       {(() => {
-        const posValue = positions.reduce((s,p)=>s+(p.size_usdt||p.size||0),0);
-        const effectiveCap = (data.current_capital||0) + posValue;
+        const effectiveCap = getEquity(data, liveprices);
         return (
           <div className="stat-row" style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
             <Stat label="Capital"   value={`$${effectiveCap.toFixed(2)}`} />
@@ -908,7 +894,7 @@ function ScalpingPanel({ data, liveprices, onClose }) {
         if(trend==="bullish")score+=1; else score-=1;
         if(volRatio>2){score=Math.round(score*1.5);signals.push(`Vol ${volRatio.toFixed(1)}x`)}
         setBtcScan({rsi:rsiV, bb:bbV, macdCross, trend, volRatio:parseFloat(volRatio.toFixed(2)), score, signals, price:closes[closes.length-1]});
-      } catch {}
+      } catch { /* ignore transient market-data errors */ }
     };
     load();
     const t = setInterval(load, 15000);
@@ -924,14 +910,13 @@ function ScalpingPanel({ data, liveprices, onClose }) {
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
           {btcLive > 0 && <span style={{ color:ACC, fontFamily:"monospace", fontWeight:700 }}>${btcLive.toLocaleString()}</span>}
-          <BotStatus data={data} isScalping={true} />
+          <BotStatus data={data} />
           <Badge text="PAPER" color={ACC} />
         </div>
       </div>
 
       {(() => {
-        const posValue = (data.open_trades||[]).reduce((s,t)=>s+(t.size||0),0);
-        const effectiveCap = (data.current_capital||0) + posValue;
+        const effectiveCap = getEquity(data, liveprices);
         return (
           <div className="stat-row" style={{ display:"flex", justifyContent:"space-between", padding:"14px 0", marginBottom:14, borderTop:"1px solid rgba(255,255,255,0.05)", borderBottom:"1px solid rgba(255,255,255,0.05)", flexWrap:"wrap", gap:12 }}>
             <Stat label="Capital"  value={`$${effectiveCap.toFixed(2)}`} />
@@ -1014,7 +999,7 @@ function ScalpingPanel({ data, liveprices, onClose }) {
 
       {tab==="position" && (
         <div>
-          <BTCChart entryPrice={openTrades[0]?.entry_price} side={openTrades[0]?.side} stopLoss={openTrades[0]?.stop_loss} takeProfit={openTrades[0]?.take_profit} defaultInterval="1m" />
+          <BTCChart entryPrice={openTrades[0]?.entry_price} side={openTrades[0]?.side} stopLoss={openTrades[0]?.stop_loss} defaultInterval="1m" />
           {openTrades.length === 0 && (
             <div style={{ color:"#ccc", textAlign:"center", padding:12, fontSize:12 }}>Sin posición — esperando señal scalping</div>
           )}
@@ -1121,61 +1106,60 @@ function ScalpingPanel({ data, liveprices, onClose }) {
 }
 
 // ─── localStorage helpers ──────────────────────────────────────────────────────
-const LS_KEY = { altcoins: "tbot_alt", scalping: "tbot_sc" };
 function lsLoad(key, fallback) {
-  try { const v = localStorage.getItem(key); if (v) return JSON.parse(v); } catch {}
+  try { const v = localStorage.getItem(key); if (v) return JSON.parse(v); } catch { /* ignore invalid local cache */ }
   return fallback;
 }
 function lsSave(key, data) {
-  try { localStorage.setItem(key, JSON.stringify(data)); } catch {}
+  try { localStorage.setItem(key, JSON.stringify(data)); } catch { /* ignore storage quota/errors */ }
 }
 
-function CodeEditor({ files }) {
-  const [selectedFile, setSelectedFile] = useState("");
-  const [content, setContent] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const LOCAL_API = "/api";
+function getOpenPositions(data) {
+  const list = [
+    ...Object.values(data?.positions || {}),
+    ...(data?.open_positions || []),
+    ...(data?.open_trades || []),
+  ];
+  return list.filter((p, i, arr) => {
+    const key = p.id || p.symbol || `${p.entry_time || ""}-${p.entry_price || ""}`;
+    return arr.findIndex(x => (x.id || x.symbol || `${x.entry_time || ""}-${x.entry_price || ""}`) === key) === i;
+  });
+}
 
-  const loadFile = async (name) => {
-    if (!name) return;
-    setLoading(true);
-    try {
-      const r = await fetch(`${LOCAL_API}/file?name=${name}`);
-      const d = await r.json();
-      if (d.content) {
-        setContent(d.content);
-        setSelectedFile(name);
-      }
-    } catch (e) { alert("Error cargando archivo"); }
-    setLoading(false);
-  };
+function getPositionSize(pos) {
+  return Number(pos?.size_usdt ?? pos?.size ?? 0) || 0;
+}
 
-  const saveFile = async () => {
-    if (!selectedFile) return;
-    setSaving(true);
-    try {
-      const r = await fetch(`${LOCAL_API}/file`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: selectedFile, content })
-      });
-      if (r.ok) {
-        alert("Archivo guardado con éxito");
-      } else {
-        alert("Error al guardar");
-      }
-    } catch (e) { alert("Error de conexión"); }
-    setSaving(false);
-  };
+function getPositionSide(pos) {
+  return pos?.side || pos?.direction || "LONG";
+}
 
-  return null;
+function getUnrealizedPnl(pos, liveprices = {}) {
+  const entry = Number(pos?.entry_price || 0);
+  const size = getPositionSize(pos);
+  const price = Number(liveprices?.[pos?.symbol || "BTCUSDT"] || pos?.current_price || 0);
+  if (!entry || !size || !price) return Number(pos?.pnl || 0) || 0;
+  const leverage = Number(pos?.leverage || 1);
+  const raw = getPositionSide(pos) === "LONG" ? (price - entry) / entry : (entry - price) / entry;
+  return raw * leverage * size;
+}
+
+function getEquity(data, liveprices = {}) {
+  const cash = Number(data?.current_capital || 0);
+  const positions = getOpenPositions(data);
+  const reserved = positions.reduce((sum, pos) => sum + getPositionSize(pos), 0);
+  const unrealized = positions.reduce((sum, pos) => sum + getUnrealizedPnl(pos, liveprices), 0);
+  return cash + reserved + unrealized;
+}
+
+function getEquityPnl(data, liveprices = {}) {
+  return getEquity(data, liveprices) - Number(data?.initial_capital || 0);
 }
 
 // ─── Dashboard Principal ───────────────────────────────────────────────────────
 export default function Dashboard() {
   const [scData,  setScData]  = useState(() => lsLoad("tbot_btc", MOCK_SC));
-  const [asData,  setAsData]  = useState(() => lsLoad("tbot_alt", { bot:"alt_scalp", current_capital:200, initial_capital:200, total_pnl:0, win_rate:0, max_drawdown:0, positions:{}, closed_trades:[] }));
+  const [asData,  setAsData]  = useState(() => lsLoad("tbot_alt", { bot:"altscalp", current_capital:200, initial_capital:200, total_pnl:0, win_rate:0, max_drawdown:0, positions:{}, closed_trades:[] }));
   const [liveprices, setLivePrices] = useState({});
   const lastManualClose = useRef(0);
   const manuallyClosed = useRef(new Set());
@@ -1200,14 +1184,14 @@ export default function Dashboard() {
           lsSave(lsKey, d);
           setter(d); return;
         }
-      } catch {}
+      } catch { /* use static fallback */ }
       try {
         const d = await fetch(fallbackUrl+"?t="+Date.now()).then(r=>r.json());
         if (d && !d.error) { lsSave(lsKey, d); setter(d); }
-      } catch {}
+      } catch { /* keep previous state */ }
     };
-    await load("btc",  "/paper_trading/btc_state.json",  setScData,  "tbot_btc");
-    await load("alt",  "/paper_trading/alt_state.json",  setAsData,  "tbot_alt");
+    await load("btc",  "/paper_trading/scalping_state.json",  setScData,  "tbot_btc");
+    await load("alt",  "/paper_trading/altscalp_state.json",  setAsData,  "tbot_alt");
     setLastFetch(new Date().toLocaleTimeString("es-AR"));
   }, [lastManualClose, manuallyClosed]);
 
@@ -1221,24 +1205,24 @@ export default function Dashboard() {
           const r = await fetch(`https://fapi.binance.com/fapi/v1/ticker/price?symbol=${sym}`);
           const d = await r.json();
           if (d.price) prices[sym] = parseFloat(d.price);
-        } catch {}
+        } catch { /* skip missing ticker */ }
       }));
       if (Object.keys(prices).length > 0) setLivePrices(prev => ({...prev, ...prices}));
-    } catch {}
+    } catch { /* keep previous prices */ }
   }, [asData.positions]);
 
   useEffect(() => {
     const t1 = setInterval(()=>setBlink(b=>!b), 800);
     const t2 = setInterval(()=>setTime(new Date()), 1000);
     const t3 = setInterval(fetchStates, 15000);
-    fetchStates();
-    return ()=>{ clearInterval(t1); clearInterval(t2); clearInterval(t3); };
+    const initial = setTimeout(fetchStates, 0);
+    return ()=>{ clearTimeout(initial); clearInterval(t1); clearInterval(t2); clearInterval(t3); };
   }, [fetchStates]);
 
   useEffect(() => {
-    fetchLivePrices();
+    const initial = setTimeout(fetchLivePrices, 0);
     const t = setInterval(fetchLivePrices, 30000);
-    return () => clearInterval(t);
+    return () => { clearTimeout(initial); clearInterval(t); };
   }, [fetchLivePrices]);
 
   const closePosition = useCallback(async (bot, pos, lp=liveprices) => {
@@ -1350,8 +1334,7 @@ export default function Dashboard() {
       const allClosed    = [...(state.all_closed_trades || state.closed_trades || displayData.all_closed_trades || displayData.closed_trades || []), closedTrade].slice(-100);
       const prevTotalPnl = displayData.total_pnl || state.total_pnl || 0;
       const totalPnl     = parseFloat((prevTotalPnl + pnl).toFixed(2));
-      const reservado    = newOpenPositions.reduce((s,p) => s+(p.size||p.size_usdt||0), 0);
-      const capital      = parseFloat(((state.initial_capital||200) - reservado + totalPnl).toFixed(2));
+      const capital      = parseFloat(((state.current_capital ?? displayData.current_capital ?? state.initial_capital ?? 200) + size + pnl).toFixed(2));
       const prevTrades   = displayData.total_trades || state.total_trades || allClosed.length;
       const prevWins     = Math.round((displayData.win_rate||0) / 100 * prevTrades);
 
@@ -1365,7 +1348,7 @@ export default function Dashboard() {
         win_rate: parseFloat(((prevWins+(pnl>0?1:0))/(prevTrades+1)*100).toFixed(1)),
         total_trades: prevTrades + 1,
         cycle_log: [{time:new Date().toLocaleTimeString("es-AR"), msg:`🛑 MANUAL ${symbol} @ $${exitPrice.toFixed(2)} | P&L ${pnl>=0?"+":""}$${pnl.toFixed(2)}`}, ...(state.cycle_log||[]).slice(0,49)],
-        manual_close: [symbol],
+        manual_close: [closedTradeId || symbol],
         cooldowns: pnl < 0 ? {...(state.cooldowns||{}), [symbol]: new Date(Date.now()+20*60*1000).toISOString()} : (state.cooldowns||{}),
         last_updated: new Date().toISOString(),
       };
@@ -1378,13 +1361,17 @@ export default function Dashboard() {
 
       try {
         await fetch(`${LOCAL_API}/state/${botKey}`, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(newState)});
-      } catch {}
+      } catch { /* UI already updated optimistically */ }
     } catch(e) { console.error(e); alert("Error: " + e.message); }
   }, [setScData, setAsData, scData, asData, lastManualClose, manuallyClosed, liveprices]);
 
 
-  const totalPnl     = (scData.total_pnl||0) + (asData.total_pnl||0);
-  const totalCapital = (scData.current_capital||0) + (asData.current_capital||0);
+  const scCapital    = getEquity(scData, liveprices);
+  const asCapital    = getEquity(asData, liveprices);
+  const scPnl        = getEquityPnl(scData, liveprices);
+  const asPnl        = getEquityPnl(asData, liveprices);
+  const totalPnl     = scPnl + asPnl;
+  const totalCapital = scCapital + asCapital;
 
   return (
     <div style={{ background:"#050508", minHeight:"100vh", color:"#ccc", fontFamily:"'Courier New', monospace", padding:"0 0 40px" }}>
@@ -1421,8 +1408,8 @@ export default function Dashboard() {
         return (
           <div style={{ borderBottom:"1px solid rgba(255,255,255,0.06)", padding:"10px 28px", display:"flex", alignItems:"center", gap:0, background:"rgba(0,0,0,0.2)" }}>
             {bots.map(({ label, color, data }, i) => {
-              const pnl = data.total_pnl || 0;
-              const cap = data.current_capital || 0;
+              const pnl = getEquityPnl(data, liveprices);
+              const cap = getEquity(data, liveprices);
               const wr  = data.win_rate || 0;
               const pos = pnl >= 0;
               return (
@@ -1459,7 +1446,7 @@ export default function Dashboard() {
                 </div>
                 <div style={{ textAlign:"center" }}>
                   <div style={{ color:"#bbb", fontSize:9, letterSpacing:1 }}>ROI</div>
-                  <div style={{ color:"#00ff88", fontFamily:"monospace", fontSize:13, fontWeight:700 }}>+{(totalPnl/1000*100).toFixed(0)}%</div>
+                  <div style={{ color:totalPnl>=0?"#00ff88":"#ff4444", fontFamily:"monospace", fontSize:13, fontWeight:700 }}>{totalPnl>=0?"+":""}{(totalPnl/(((scData.initial_capital||0)+(asData.initial_capital||0))||1)*100).toFixed(0)}%</div>
                 </div>
               </div>
             </div>
